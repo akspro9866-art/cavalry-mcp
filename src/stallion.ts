@@ -2,20 +2,31 @@
  * Stallion bridge client — sends JavaScript to Cavalry via HTTP POST.
  *
  * Cavalry must have the Stallion script running (Scripts > Stallion).
- * The server listens on 127.0.0.1:8080 by default.
+ * The server listens on 127.0.0.1:8080 by default (hardcoded upstream,
+ * nothing configurable — verified against the Stallion repo).
  *
- * Readback: Cavalry's api.WebServer only ever acks /post with a fixed body,
- * so tool scripts write their result to a JSON file via api.writeToFile() and
- * the node side polls for that file (matched by a per-call sequence number).
+ * Readback: Stallion's /post only ever returns a fixed ack body (upstream
+ * has no support for response payloads), so tool scripts write their result
+ * to a JSON file via api.writeToFile(path, json, true) and the node side
+ * waits for that file, matched by a per-call UUID in the `seq` field.
+ *
+ * Cavalry executes scripts on a single JS thread, so all bridge traffic is
+ * serialized through an internal queue — concurrent tool calls can never
+ * interleave their result-file writes.
  *
  * Configuration via environment variables (all optional):
- *   CAVALRY_HOST        Stallion host     (default 127.0.0.1)
- *   CAVALRY_PORT        Stallion port     (default 8080)
- *   CAVALRY_TIMEOUT_MS  Request timeout   (default 120000 = 2 minutes,
- *                                          long enough for renders)
- *   CAVALRY_RESULT_PATH Where tool scripts write their JSON result
- *                       (default <os tmpdir>/cavalry-mcp-result.json)
+ *   CAVALRY_HOST              Stallion host   (default 127.0.0.1)
+ *   CAVALRY_PORT              Stallion port   (default 8080)
+ *   CAVALRY_HTTP_TIMEOUT_MS   HTTP ack timeout (default 10000)
+ *   CAVALRY_RESULT_TIMEOUT_MS How long to wait for the result file
+ *                            (default 120000 — long enough for renders)
+ *   CAVALRY_TIMEOUT_MS        Legacy fallback that sets both timeouts
+ *   CAVALRY_RESULT_PATH       Where tool scripts write their JSON result
+ *                            (default <os tmpdir>/cavalry-mcp-result-<pid>.json,
+ *                            per-process so multiple MCP clients don't
+ *                            clobber each other's results)
  */
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -32,25 +43,27 @@ export interface StallionPayload {
 export interface StallionConfig {
   host: string;
   port: number;
-  timeoutMs: number;
+  httpTimeoutMs: number;
+  resultTimeoutMs: number;
   resultPath: string;
 }
 
-function loadConfig(): StallionConfig {
+function intEnv(name: string, fallback: number): number {
+  const v = Number.parseInt(process.env[name] ?? "", 10);
+  return Number.isFinite(v) && v > 0 ? v : fallback;
+}
+
+export function loadConfig(): StallionConfig {
   const host = process.env.CAVALRY_HOST ?? "127.0.0.1";
   const port = Number.parseInt(process.env.CAVALRY_PORT ?? "8080", 10);
-  const timeoutMs = Number.parseInt(
-    process.env.CAVALRY_TIMEOUT_MS ?? "120000",
-    10,
-  );
-  const resultPath =
-    process.env.CAVALRY_RESULT_PATH ??
-    path.join(os.tmpdir(), "cavalry-mcp-result.json");
   return {
     host,
     port: Number.isFinite(port) && port > 0 ? port : 8080,
-    timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 120000,
-    resultPath,
+    httpTimeoutMs: intEnv("CAVALRY_HTTP_TIMEOUT_MS", intEnv("CAVALRY_TIMEOUT_MS", 10000)),
+    resultTimeoutMs: intEnv("CAVALRY_RESULT_TIMEOUT_MS", intEnv("CAVALRY_TIMEOUT_MS", 120000)),
+    resultPath:
+      process.env.CAVALRY_RESULT_PATH ??
+      path.join(os.tmpdir(), `cavalry-mcp-result-${process.pid}.json`),
   };
 }
 
@@ -58,6 +71,17 @@ const CONFIG: StallionConfig = loadConfig();
 
 export function getConfig(): StallionConfig {
   return CONFIG;
+}
+
+/**
+ * Serialize async tasks head-of-line. Cavalry runs scripts on one thread and
+ * every call shares one result file, so bridge calls must not overlap.
+ */
+let queueTail: Promise<unknown> = Promise.resolve();
+export function enqueue<T>(fn: () => Promise<T>): Promise<T> {
+  const run = queueTail.then(fn, fn);
+  queueTail = run.catch(() => undefined);
+  return run;
 }
 
 /**
@@ -74,7 +98,7 @@ export async function sendToCavalry(
   const payload: StallionPayload = { type, code };
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
+  const timeout = setTimeout(() => controller.abort(), config.httpTimeoutMs);
   try {
     const response = await fetch(url, {
       method: "POST",
@@ -93,7 +117,15 @@ export async function sendToCavalry(
   } catch (err: unknown) {
     if (err instanceof Error && err.name === "AbortError") {
       throw new Error(
-        `Timed out after ${config.timeoutMs} ms waiting for Cavalry. The script may still be running; increase CAVALRY_TIMEOUT_MS if this happens often.`,
+        `Timed out after ${config.httpTimeoutMs} ms waiting for Stallion to acknowledge the script. Increase CAVALRY_HTTP_TIMEOUT_MS if this happens often.`,
+      );
+    }
+    const code =
+      (err as NodeJS.ErrnoException | undefined)?.code ??
+      ((err as { cause?: NodeJS.ErrnoException } | undefined)?.cause?.code);
+    if (code === "ECONNREFUSED" || code === "ENOTFOUND") {
+      throw new Error(
+        `Cannot reach Stallion at ${url}. Make sure Cavalry is running and the Stallion script is active (Scripts > Stallion).`,
       );
     }
     throw err;
@@ -102,7 +134,65 @@ export async function sendToCavalry(
   }
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Read the result file and return it only if its seq matches this call. */
+function readMatch(resultPath: string, seq: string): string | null {
+  let txt: string;
+  try {
+    txt = fs.readFileSync(resultPath, "utf8");
+  } catch {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(txt) as { seq?: string };
+    return parsed && parsed.seq === seq ? txt : null;
+  } catch {
+    return null; // torn/partial write — keep waiting
+  }
+}
+
+/**
+ * Wait (near-instantly, via fs.watch with a polling backstop) for the result
+ * file to contain our seq. Resolves "" on timeout.
+ */
+function waitForResult(resultPath: string, seq: string, timeoutMs: number): Promise<string> {
+  return new Promise((resolve) => {
+    const immediate = readMatch(resultPath, seq);
+    if (immediate !== null) {
+      resolve(immediate);
+      return;
+    }
+    let done = false;
+    let watcher: fs.FSWatcher | null = null;
+    const finish = (v: string | null) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      clearInterval(poll);
+      watcher?.close();
+      resolve(v ?? "");
+    };
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    const poll = setInterval(() => {
+      const m = readMatch(resultPath, seq);
+      if (m !== null) finish(m);
+    }, 200);
+    try {
+      const dir = path.dirname(resultPath);
+      const base = path.basename(resultPath);
+      watcher = fs.watch(dir, (_event, filename) => {
+        if (filename && path.basename(filename.toString()) === base) {
+          const m = readMatch(resultPath, seq);
+          if (m !== null) finish(m);
+        }
+      });
+      watcher.on("error", () => {
+        /* fall back to interval polling */
+      });
+    } catch {
+      /* directory may not exist yet; interval polling covers it */
+    }
+  });
+}
 
 /**
  * Run a script and return the JSON string the script wrote via
@@ -112,53 +202,44 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  *   - a thrown error is captured into __out.error instead of being lost
  *   - a variable named __result (if assigned) is returned as __out.result
  *   - the result JSON is written to a known file tagged with a unique seq
+ *   - if that write fails, a minimal payload is retried so the failure
+ *     reason still reaches the node side (writeFailed)
  *
- * The node side polls that file until the seq appears — Stallion's onPost
- * callback polls at ~1 Hz, so the HTTP ack can arrive before the script runs.
+ * Calls are serialized through the bridge queue.
  */
 export async function runScriptWithResult(
   code: string,
   config: StallionConfig = CONFIG,
+  opts?: { timeoutMs?: number },
 ): Promise<string> {
-  const seq = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+  const seq = randomUUID();
   const resultPathLiteral = JSON.stringify(config.resultPath);
   const wrapped = `(function() {
-var __out = { ok: true, seq: "${seq}" };
+var __out = { ok: true, seq: ${JSON.stringify(seq)} };
 try {
 ${code}
 } catch (e) { __out.ok = false; __out.error = String(e && e.message ? e.message : e); }
 try { if (typeof __result !== "undefined") { __out.result = __result; } } catch (e3) {}
-try { api.writeToFile(${resultPathLiteral}, JSON.stringify(__out)); } catch (e2) { __out.writeFailed = String(e2); }
+try { api.writeToFile(${resultPathLiteral}, JSON.stringify(__out), true); }
+catch (e2) {
+  try { api.writeToFile(${resultPathLiteral}, JSON.stringify({ ok: false, seq: ${JSON.stringify(seq)}, writeFailed: String(e2) }), true); }
+  catch (e4) {}
+}
 })()`;
 
-  let prevMtime = 0;
-  try {
-    prevMtime = fs.statSync(config.resultPath).mtimeMs;
-  } catch {
-    /* no previous result file */
-  }
-
-  await sendToCavalry(wrapped, "script", config);
-
-  const deadline = Date.now() + config.timeoutMs;
-  while (Date.now() < deadline) {
-    await sleep(120);
-    try {
-      const stat = fs.statSync(config.resultPath);
-      if (stat.mtimeMs === prevMtime) continue;
-      const txt = fs.readFileSync(config.resultPath, "utf8");
-      if (txt.includes(`"${seq}"`)) {
-        return txt;
-      }
-    } catch {
-      /* file not written yet */
-    }
-  }
-  return "";
+  return enqueue(async () => {
+    await sendToCavalry(wrapped, "script", config);
+    return waitForResult(
+      config.resultPath,
+      seq,
+      opts?.timeoutMs ?? config.resultTimeoutMs,
+    );
+  });
 }
 
 /**
- * Check if Stallion is reachable in Cavalry.
+ * Check if Stallion is reachable in Cavalry. Not queued: this must answer
+ * quickly even while another call is mid-flight.
  */
 export async function pingStallion(
   config: StallionConfig = CONFIG,
