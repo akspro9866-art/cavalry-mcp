@@ -91,6 +91,9 @@ export const EASING_LIST = EASING_NAMES.join(", ");
 export function sceneLayersScript(idsExpr: string): string {
   return `
 var __ids = ${idsExpr};
+var __sel = [];
+try { __sel = api.getSelection() || []; } catch (e) {}
+function __isSelected(id) { for (var s = 0; s < __sel.length; s++) { if (__sel[s] === id) return true; } return false; }
 var __info = [];
 function __g(fn) { try { return fn(); } catch (e) { return null; } }
 for (var i = 0; i < __ids.length; i++) {
@@ -100,6 +103,7 @@ for (var i = 0; i < __ids.length; i++) {
       type: __g(function () { return api.getLayerType(id); }),
       name: __g(function () { return api.getNiceName(id); }),
       visible: __g(function () { return api.get(id, "visible"); }),
+      selected: __isSelected(id),
       position: __g(function () { return { x: Number(api.get(id, "position.x")), y: Number(api.get(id, "position.y")) }; }),
       inFrame: __g(function () { return api.getInFrame(id); }),
       outFrame: __g(function () { return api.getOutFrame(id); }),

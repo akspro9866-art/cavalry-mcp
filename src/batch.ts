@@ -38,6 +38,9 @@ export type BatchOp =
   | { op: "setGenerator"; layerId: string; generatorType: string; attrPath?: string }
   | { op: "addDynamic"; layerId: string; attrName: string; attrType: string }
   | { op: "rename"; layerId: string; name: string }
+  | { op: "order"; layerId: string; to: "forward" | "front" | "backward" | "back" }
+  | { op: "expression"; layerId: string; attrPath: string; expression: string }
+  | { op: "gradient"; layerId: string; attrPath: string; colors: string[] }
   | { op: "select"; layerIds: string[] }
   | { op: "delete"; layerIds: string[] }
   | { op: "timing"; layerId: string; inFrame?: number; outFrame?: number; offset?: number }
@@ -54,12 +57,24 @@ const OPS = new Set([
   "setGenerator",
   "addDynamic",
   "rename",
+  "order",
+  "expression",
+  "gradient",
   "select",
   "delete",
   "timing",
   "setParent",
   "reorder",
 ]);
+
+/** Z-order targets map to Cavalry's selection-based stacking APIs.
+ *  The generated script selects the layer, acts, and restores the selection. */
+const ORDER_FNS: Record<string, string> = {
+  forward: "api.bringForward();",
+  front: "api.bringToFront();",
+  backward: "api.moveBackward();",
+  back: "api.moveToBack();",
+};
 
 function isStr(v: unknown): v is string {
   return typeof v === "string" && v.length > 0;
@@ -206,6 +221,36 @@ export function compileBatch(ops: BatchOp[]): string {
         if (!isStr(op.name)) bad(i, "name must be a non-empty string");
         body.push(
           `__rec(${i}, "rename", function () { return api.rename(${refExpr(op.layerId, i, declared)}, ${jsString(op.name)}); });`,
+        );
+        break;
+      }
+      case "order": {
+        if (!isStr(op.layerId)) bad(i, "layerId must be a non-empty string");
+        if (!isStr(op.to) || !(op.to in ORDER_FNS)) {
+          bad(i, `to must be one of ${Object.keys(ORDER_FNS).join(", ")}`);
+        }
+        body.push(
+          `__rec(${i}, "order", function () { var id = ${refExpr(op.layerId, i, declared)}; var prev = api.getSelection(); api.select([id]); try { ${ORDER_FNS[op.to]} } finally { try { api.select(prev); } catch (e) {} } return ${jsString(op.to)}; });`,
+        );
+        break;
+      }
+      case "expression": {
+        if (!isStr(op.layerId)) bad(i, "layerId must be a non-empty string");
+        if (!isStr(op.attrPath)) bad(i, "attrPath must be a non-empty string");
+        if (typeof op.expression !== "string") bad(i, "expression must be a string");
+        body.push(
+          `__rec(${i}, "expression", function () { return api.setAttributeExpression(${refExpr(op.layerId, i, declared)}, ${jsString(op.attrPath)}, ${jsString(op.expression)}); });`,
+        );
+        break;
+      }
+      case "gradient": {
+        if (!isStr(op.layerId)) bad(i, "layerId must be a non-empty string");
+        if (!isStr(op.attrPath)) bad(i, "attrPath must be a non-empty string");
+        if (!Array.isArray(op.colors) || op.colors.length < 2 || !op.colors.every((c) => typeof c === "string")) {
+          bad(i, "colors must be an array of at least 2 hex strings");
+        }
+        body.push(
+          `__rec(${i}, "gradient", function () { return api.setGradientFromColors(${refExpr(op.layerId, i, declared)}, ${jsString(op.attrPath)}, ${JSON.stringify(op.colors)}); });`,
         );
         break;
       }

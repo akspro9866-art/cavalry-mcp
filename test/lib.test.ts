@@ -63,6 +63,7 @@ test("EASING_NAMES: 20 verified names, no EaseInOut/Linear", () => {
 test("sceneLayersScript evaluates against a mock api and returns structured rows", () => {
   const api = {
     getAllSceneLayers: () => ["basicShape#1", "textShape#2"],
+    getSelection: () => ["textShape#2"],
     getLayerType: (id: string) => (id.startsWith("basicShape") ? "basicShape" : "textShape"),
     getNiceName: (id: string) => `name of ${id}`,
     get: (id: string, attr: string) => {
@@ -85,9 +86,11 @@ test("sceneLayersScript evaluates against a mock api and returns structured rows
     type: "basicShape",
     name: "name of basicShape#1",
     visible: true,
+    selected: false,
     position: { x: 10, y: -20 },
     inFrame: 0,
     outFrame: 90,
     parent: null,
   });
+  assert.equal(rows[1].selected, true);
 });

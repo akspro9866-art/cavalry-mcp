@@ -1,7 +1,7 @@
 {
   "name": "cavalry-mcp",
-  "version": "2.1.0",
-  "description": "MCP server for Cavalry animation software — batch scene building, keyframe animations with presets, filmstrip previews, video render via render queue, and real data readback. Works with ZCode and any MCP client.",
+  "version": "2.2.0",
+  "description": "MCP server for Cavalry animation software — batch scene building, keyframe animation with presets and editing, effects/expressions/gradients, composition management, filmstrip previews, video render via render queue, and real data readback. Works with ZCode and any MCP client.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {

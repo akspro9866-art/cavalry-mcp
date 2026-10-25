@@ -19,6 +19,10 @@ export interface MockApiState {
   easings: Array<{ layerId: string; attrPath: string; frame: number; name: string }>;
   selection: string[];
   order: string[];
+  expressions: Map<string, string>;
+  connections: Array<{ sourceId: string; sourceAttr: string; targetId: string; targetAttr: string }>;
+  comps: Array<{ id: string; name: string }>;
+  activeComp: string;
 }
 
 export function createMockApiState(): MockApiState {
@@ -28,6 +32,10 @@ export function createMockApiState(): MockApiState {
     easings: [],
     selection: [],
     order: [],
+    expressions: new Map(),
+    connections: [],
+    comps: [{ id: "comp#1", name: "Comp 1" }],
+    activeComp: "comp#1",
   };
 }
 
@@ -61,6 +69,7 @@ export function buildMockApi(state: MockApiState, hooks: MockApiHooks = {}) {
     connect(sourceId: string, sourceAttr: string, targetId: string, targetAttr: string, force?: boolean) {
       layer(sourceId);
       layer(targetId);
+      state.connections.push({ sourceId, sourceAttr, targetId, targetAttr });
       state.order.push(`connect:${sourceId}.${sourceAttr}->${targetId}.${targetAttr}${force ? "!" : ""}`);
       return true;
     },
@@ -99,8 +108,148 @@ export function buildMockApi(state: MockApiState, hooks: MockApiHooks = {}) {
       state.easings.push({ layerId: id, attrPath, frame, name });
       return true;
     },
+    deleteKeyframe(id: string, attr: string, frame: number) {
+      layer(id);
+      const before = state.keyframes.length;
+      state.keyframes = state.keyframes.filter(
+        (k) => !(k.layerId === id && k.frame === frame && attr in k.attributes),
+      );
+      if (state.keyframes.length === before) throw new Error(`no keyframe at frame ${frame} for ${attr}`);
+    },
+    deleteAnimation(id: string, attr: string) {
+      layer(id);
+      state.keyframes = state.keyframes.filter((k) => !(k.layerId === id && attr in k.attributes));
+    },
+    setKeyframeVelocity(id: string, dict: unknown) {
+      layer(id);
+      state.order.push(`setKeyframeVelocity:${id}:${JSON.stringify(dict)}`);
+    },
+    clearKeyframeVelocity(id: string, dict: unknown) {
+      layer(id);
+      state.order.push(`clearKeyframeVelocity:${id}:${JSON.stringify(dict)}`);
+    },
+    getInConnectedAttributes(id: string) {
+      layer(id);
+      return [...new Set(state.connections.filter((c) => c.targetId === id).map((c) => c.targetAttr))];
+    },
+    getInConnection(id: string, attr: string) {
+      layer(id);
+      const c = state.connections.find((x) => x.targetId === id && x.targetAttr === attr);
+      return c ? `${c.sourceId}.${c.sourceAttr}` : "";
+    },
+    getOutConnections(id: string, attr: string) {
+      layer(id);
+      return state.connections
+        .filter((c) => c.sourceId === id && c.sourceAttr === attr)
+        .map((c) => `${c.targetId}.${c.targetAttr}`);
+    },
+    setAttributeExpression(id: string, attr: string, expression: string) {
+      layer(id);
+      state.expressions.set(`${id}:${attr}`, expression);
+    },
+    getAttributeExpression(id: string, attr: string) {
+      layer(id);
+      return state.expressions.get(`${id}:${attr}`) ?? "";
+    },
+    hasAttributeExpression(id: string, attr: string) {
+      layer(id);
+      return state.expressions.has(`${id}:${attr}`);
+    },
+    setGradientFromColors(id: string, attr: string, colors: string[]) {
+      layer(id);
+      layer(id).attrs[attr] = [...colors];
+      state.order.push(`setGradientFromColors:${id}:${attr}:${colors.length}`);
+    },
+    generateHarmoniousPalette(baseColor: string, count: number, type: string) {
+      return Array.from({ length: count }, (_, i) => (i === 0 ? baseColor : `${baseColor}${i}`));
+    },
+    bringForward() {
+      if (!state.selection.length) throw new Error("no selection");
+      state.order.push(`bringForward:${state.selection.join(",")}`);
+    },
+    bringToFront() {
+      if (!state.selection.length) throw new Error("no selection");
+      state.order.push(`bringToFront:${state.selection.join(",")}`);
+    },
+    moveBackward() {
+      if (!state.selection.length) throw new Error("no selection");
+      state.order.push(`moveBackward:${state.selection.join(",")}`);
+    },
+    moveToBack() {
+      if (!state.selection.length) throw new Error("no selection");
+      state.order.push(`moveToBack:${state.selection.join(",")}`);
+    },
+    createComp(name: string) {
+      const id = `comp#${state.comps.length + 1}`;
+      state.comps.push({ id, name });
+      return id;
+    },
+    getComps() {
+      return state.comps.map((c) => c.id);
+    },
+    setActiveComp(compId: string) {
+      if (!state.comps.some((c) => c.id === compId)) throw new Error(`comp ${compId} not found`);
+      state.activeComp = compId;
+    },
+    getCompLayers(_topLevel: boolean) {
+      // real API reads the active comp only
+      return [...state.layers.keys()];
+    },
+    getCompLayersOfType(_topLevel: boolean, type: string) {
+      return this.getCompLayers(_topLevel).filter((id) => state.layers.get(id)?.type === type);
+    },
+    preCompose(name?: string) {
+      if (!state.selection.length) throw new Error("no selection");
+      const compId = `comp#${state.comps.length + 1}`;
+      state.comps.push({ id: compId, name: name ?? "Pre-comp" });
+      const refId = `compReference#${state.comps.length}`;
+      state.layers.set(refId, { type: "compReference", name: name ?? "Pre-comp", attrs: {} });
+      state.order.push(`preCompose:${state.selection.join(",")}:${compId}`);
+      return refId;
+    },
+    newScene() {
+      state.layers.clear();
+      state.keyframes = [];
+      state.easings = [];
+      state.connections = [];
+      state.expressions.clear();
+      state.comps = [{ id: "comp#1", name: "Comp 1" }];
+      state.activeComp = "comp#1";
+      state.order.push("newScene");
+    },
+    resetTransform(id: string) {
+      layer(id);
+      state.order.push(`resetTransform:${id}`);
+    },
+    freezeTransform(id: string) {
+      layer(id);
+      state.order.push(`freezeTransform:${id}`);
+    },
+    centrePivot(id: string, doCentroid: boolean) {
+      layer(id);
+      state.order.push(`centrePivot:${id}:${doCentroid}`);
+    },
+    getAllLayerTypes(includeExperimental: boolean) {
+      const types = [
+        { type: "basicShape", name: "Basic Shape" },
+        { type: "textShape", name: "Text Shape" },
+        { type: "linearGradient", name: "Linear Gradient" },
+        { type: "noiseDeformer", name: "Noise Deformer" },
+      ];
+      if (includeExperimental) types.push({ type: "experimentalThing", name: "Experimental Thing" });
+      return types;
+    },
+    play() {
+      state.order.push("play");
+    },
+    stop() {
+      state.order.push("stop");
+    },
+    getCavalryVersion() {
+      return "2.8.0";
+    },
     getActiveComp() {
-      return "comp#1";
+      return state.activeComp;
     },
     getLayerType(id: string) {
       return state.layers.get(id)?.type ?? null;

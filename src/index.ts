@@ -35,6 +35,21 @@
  *       "EaseInOut"/"Linear"); easing applies to the keyframe's OUTGOING segment
  *   - api.autokey pref: static api.set() on an already-animated attribute
  *       creates a keyframe at the current playhead — prefer keyframe()
+ *   - keyframe surgery:      api.deleteKeyframe(id, attr, frame),
+ *                            api.deleteAnimation(id, attr),
+ *                            api.setKeyframeVelocity / clearKeyframeVelocity
+ *                            take {attr: {frame, …}} dictionaries
+ *   - z-order:               api.bringForward/bringToFront/moveBackward/
+ *                            moveToBack operate on the SELECTION (no id args)
+ *   - preCompose:            also selection-based; name is optional
+ *   - comp layers:           api.getCompLayers(topLevel, compId) /
+ *                            getCompLayersOfType(topLevel, type, compId)
+ *   - gradients:             api.setGradientFromColors(id, attr, [hex…])
+ *   - palettes:              api.generateHarmoniousPalette(hex, count, type)
+ *   - expressions:           api.setAttributeExpression(id, attr, code)
+ *   - connections readback:  api.getInConnectedAttributes(id) +
+ *                            api.getInConnection(id, attr) /
+ *                            api.getOutConnections(id, attr)
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -59,7 +74,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const server = new McpServer({
   name: "cavalry-mcp",
-  version: "2.1.0",
+  version: "2.2.0",
 });
 
 /** Run a script through the bridge and parse the outcome. Never throws. */
@@ -109,17 +124,29 @@ async function waitForFile(filePath: string, timeoutMs: number): Promise<boolean
 // ---------------------------------------------------------------------------
 server.tool(
   "cavalry_ping",
-  "Check if Cavalry is running and the Stallion bridge is reachable",
+  "Check if Cavalry is running and the Stallion bridge is reachable. When reachable, also reports the Cavalry version.",
   {},
   async () => {
     const reachable = await pingStallion();
+    if (!reachable) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "Cavalry is not reachable. Make sure Cavalry is running and the Stallion script is active (Scripts > Stallion).",
+          },
+        ],
+      };
+    }
+    const { outcome } = await exec(`__result = (typeof api.getCavalryVersion === "function") ? api.getCavalryVersion() : null;`, { timeoutMs: 5000 });
+    const version = outcome.ok && outcome.text !== "ok" && outcome.text !== "null" ? outcome.text.replace(/^"|"$/g, "") : null;
     return {
       content: [
         {
           type: "text",
-          text: reachable
-            ? "Cavalry is reachable via Stallion."
-            : "Cavalry is not reachable. Make sure Cavalry is running and the Stallion script is active (Scripts > Stallion).",
+          text: version
+            ? `Cavalry is reachable via Stallion. Cavalry version: ${version}.`
+            : "Cavalry is reachable via Stallion.",
         },
       ],
     };
@@ -142,7 +169,7 @@ server.tool(
 server.tool(
   "cavalry_batch",
   `Execute a list of operations in a single round trip — building a scene this way costs one bridge call instead of one per step (each bridge call has ~1s latency). Each op runs in its own try/catch, so one failure doesn't kill the batch; per-op ok/error comes back. Give a create/duplicate op "as": "name" and reference it later as "$name" in any layerId field.
-Ops: create {layerType, name?, as?} | duplicate {layerId, as?, withInputConnections?} | set {layerId, attributes} | keyframe {layerId, keyframes:[{frame, attributes}]} | easing {layerId, attrPath, frame, easingType} | connect {sourceLayerId, sourceAttr, targetLayerId, targetAttr, force?} | setGenerator {layerId, generatorType, attrPath?} | addDynamic {layerId, attrName, attrType} | rename {layerId, name} | select {layerIds} | delete {layerIds} | timing {layerId, inFrame?, outFrame?, offset?} | setParent {layerId, parentLayerId?} | reorder {layerId, underLayerId}.
+Ops: create {layerType, name?, as?} | duplicate {layerId, as?, withInputConnections?} | set {layerId, attributes} | keyframe {layerId, keyframes:[{frame, attributes}]} | easing {layerId, attrPath, frame, easingType} | connect {sourceLayerId, sourceAttr, targetLayerId, targetAttr, force?} | setGenerator {layerId, generatorType, attrPath?} | addDynamic {layerId, attrName, attrType} | rename {layerId, name} | order {layerId, to: forward|front|backward|back} | expression {layerId, attrPath, expression} | gradient {layerId, attrPath, colors:[hex,…]} | select {layerIds} | delete {layerIds} | timing {layerId, inFrame?, outFrame?, offset?} | setParent {layerId, parentLayerId?} | reorder {layerId, underLayerId}.
 Example: [{"op":"create","layerType":"basicShape","name":"BG","as":"bg"},{"op":"set","layerId":"$bg","attributes":{"material.materialColor":"#101828"}},{"op":"keyframe","layerId":"$bg","keyframes":[{"frame":0,"attributes":{"position.x":0}},{"frame":30,"attributes":{"position.x":200}}]}]`,
   { operations: z.array(z.record(z.string(), z.unknown())).describe("Ordered list of operations") },
   async ({ operations }) => {
@@ -861,6 +888,296 @@ server.tool(
 api.undo();
 __result = "undo triggered";`,
     ),
+);
+
+// ---------------------------------------------------------------------------
+// Tool: layer_order — z-order without needing another layer ID
+// ---------------------------------------------------------------------------
+server.tool(
+  "cavalry_layer_order",
+  `Move layers in the layer stack by relative or absolute z-order: forward (up one), front (top), backward (down one), back (bottom). Cavalry's stacking APIs are selection-based, so this tool selects each layer, moves it, and restores your selection.`,
+  {
+    layerIds: z.array(z.string()).min(1).describe("Layer IDs to move (processed in order)"),
+    to: z.enum(["forward", "front", "backward", "back"]).describe("Where to move the layers"),
+  },
+  async ({ layerIds, to }) => {
+    const fn = { forward: "api.bringForward();", front: "api.bringToFront();", backward: "api.moveBackward();", back: "api.moveToBack();" }[to];
+    const code = `(function () {
+var ids = ${JSON.stringify(layerIds)};
+var prev = api.getSelection();
+var applied = [], failed = [];
+function step(id) { try { api.select([id]); ${fn} applied.push(id); } catch (e) { failed.push(id + ": " + String(e && e.message ? e.message : e)); } }
+for (var i = 0; i < ids.length; i++) step(ids[i]);
+try { api.select(prev); } catch (e) {}
+__result = { to: ${jsString(to)}, applied: applied, failed: failed };
+})();`;
+    return runCode("Layer order: ", code);
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Tool: keyframe_edit — delete/modify existing animation
+// ---------------------------------------------------------------------------
+server.tool(
+  "cavalry_keyframe_edit",
+  `Edit or remove EXISTING animation (cavalry_keyframe only creates). Actions:
+- delete: remove keyframes at specific frames — frames: [0, 30]
+- deleteAnimation: remove ALL keyframes on one attribute (attrPath) — or every animated attribute of the layer when attrPath is omitted
+- setVelocity: per-keyframe velocity/spacing — spec: {"position.x": {frame: 30, leftSpeed, rightSpeed, leftInfluence, rightInfluence}}
+- clearVelocity: reset the four speed/influence fields — spec: {"position.x": {frame: 30}}`,
+  {
+    action: z.enum(["delete", "deleteAnimation", "setVelocity", "clearVelocity"]),
+    layerId: z.string().describe("The layer ID"),
+    attrPath: z.string().optional().describe("Attribute path (required for delete/setVelocity/clearVelocity; optional for deleteAnimation)"),
+    frames: z.array(z.number()).optional().describe("Frames of the keyframes to delete (action: delete)"),
+    spec: z.record(z.string(), z.unknown()).optional().describe("Per-attribute keyframe dictionary (actions: setVelocity / clearVelocity)"),
+  },
+  async ({ action, layerId, attrPath, frames, spec }) => {
+    if (action === "delete") {
+      if (!attrPath) return textResult("delete requires attrPath.", true);
+      if (!frames || frames.length === 0) return textResult("delete requires a non-empty frames array.", true);
+      const code = `(function () {
+var id = ${jsString(layerId)}, attr = ${jsString(attrPath)};
+var applied = [], failed = [];
+function step(f) { try { api.deleteKeyframe(id, attr, f); applied.push(f); } catch (e) { failed.push(f + ": " + String(e && e.message ? e.message : e)); } }
+var fs = ${JSON.stringify(frames)};
+for (var i = 0; i < fs.length; i++) step(fs[i]);
+__result = { deleted: applied, failed: failed };
+})();`;
+      return runCode("Keyframes deleted: ", code);
+    }
+    if (action === "deleteAnimation") {
+      const code = attrPath
+        ? `api.deleteAnimation(${jsString(layerId)}, ${jsString(attrPath)}); __result = { attributes: [${jsString(attrPath)}] };`
+        : `(function () {
+var attrs = api.getAnimatedAttributes(${jsString(layerId)});
+var applied = [], failed = [];
+for (var i = 0; i < attrs.length; i++) { (function (a) { try { api.deleteAnimation(${jsString(layerId)}, a); applied.push(a); } catch (e) { failed.push(a + ": " + String(e && e.message ? e.message : e)); } })(attrs[i]); }
+__result = { attributes: applied, failed: failed };
+})();`;
+      return runCode("Animation deleted: ", code);
+    }
+    // setVelocity / clearVelocity
+    if (!attrPath || !spec) return textResult(`${action} requires attrPath and spec.`, true);
+    const fn = action === "setVelocity" ? "api.setKeyframeVelocity" : "api.clearKeyframeVelocity";
+    return runCode(
+      `${action} applied: `,
+      `${fn}(${jsString(layerId)}, ${JSON.stringify({ [attrPath]: spec })}); __result = ${jsString(attrPath)};`,
+    );
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Tool: get_connections — effect/dependency wiring readback
+// ---------------------------------------------------------------------------
+server.tool(
+  "cavalry_get_connections",
+  "Read the connection graph around a layer in one call: every attribute that has an incoming connection (with its source), and every outgoing connection for every attribute plus the main output (\"id\"). Use it to see how effects/modifiers are wired before rewiring with cavalry_connect.",
+  {
+    layerId: z.string().describe("The layer ID"),
+  },
+  async ({ layerId }) => {
+    const code = `(function () {
+var id = ${jsString(layerId)};
+function __g(fn) { try { return fn(); } catch (e) { return null; } }
+var incoming = {};
+var inAttrs = __g(function () { return api.getInConnectedAttributes(id); }) || [];
+for (var i = 0; i < inAttrs.length; i++) { (function (a) { incoming[a] = __g(function () { return api.getInConnection(id, a); }); })(inAttrs[i]); }
+var outgoing = {};
+var attrs = __g(function () { return api.getAttributes(id); }) || [];
+for (var j = 0; j < attrs.length; j++) { (function (a) { var o = __g(function () { return api.getOutConnections(id, a); }); if (o && o.length) outgoing[a] = o; })(attrs[j]); }
+var idOut = __g(function () { return api.getOutConnections(id, "id"); });
+if (idOut && idOut.length) outgoing["id"] = idOut;
+__result = { layerId: id, incoming: incoming, outgoing: outgoing };
+})();`;
+    return runCode("", code);
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Tool: expression — per-attribute JS expressions
+// ---------------------------------------------------------------------------
+server.tool(
+  "cavalry_expression",
+  `Set or read a JavaScript expression on an attribute (Cavalry evaluates it every frame). action "get" returns {has, expression}; action "set" applies the code — write it exactly as in Cavalry's expression field, e.g. "value * 2" or "[sin(time), 0]".`,
+  {
+    action: z.enum(["set", "get"]),
+    layerId: z.string().describe("The layer ID"),
+    attrPath: z.string().describe("The attribute path, e.g. \"position.x\""),
+    expression: z.string().optional().describe("Expression code (action: set). Use \"\" to clear."),
+  },
+  async ({ action, layerId, attrPath, expression }) => {
+    if (action === "get") {
+      return runCode(
+        "",
+        `__result = { attrPath: ${jsString(attrPath)}, has: api.hasAttributeExpression(${jsString(layerId)}, ${jsString(attrPath)}), expression: api.getAttributeExpression(${jsString(layerId)}, ${jsString(attrPath)}) };`,
+      );
+    }
+    if (expression === undefined) return textResult("set requires expression.", true);
+    return runCode(
+      "Expression set: ",
+      `api.setAttributeExpression(${jsString(layerId)}, ${jsString(attrPath)}, ${jsString(expression)}); __result = ${jsString(attrPath)};`,
+    );
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Tool: gradient — one-call gradient from hex colors
+// ---------------------------------------------------------------------------
+server.tool(
+  "cavalry_gradient",
+  'Set a gradient attribute from a list of hex colors in one call (api.setGradientFromColors), e.g. colors ["#ffffff", "#4ffd7a", "#ff24e0"] on a linearGradient layer\'s "generator.gradient" or a gradientShader\'s "generator.gradient".',
+  {
+    layerId: z.string().describe("The layer ID"),
+    attrPath: z.string().describe('Gradient attribute path, e.g. "generator.gradient"'),
+    colors: z.array(z.string()).min(2).describe("Hex color stops, in order (at least 2)"),
+  },
+  async ({ layerId, attrPath, colors }) =>
+    runCode(
+      "Gradient set: ",
+      `api.setGradientFromColors(${jsString(layerId)}, ${jsString(attrPath)}, ${JSON.stringify(colors)}); __result = ${JSON.stringify(colors)};`,
+    ),
+);
+
+// ---------------------------------------------------------------------------
+// Tool: generate_palette — harmonious color palettes
+// ---------------------------------------------------------------------------
+server.tool(
+  "cavalry_generate_palette",
+  `Generate a harmonious palette of hex colors from a base color (api.generateHarmoniousPalette). Types: monochromatic, analogous, complementary, splitComplementary, triadic, square, rectangular, circular, goldenRatio (count is clamped per type, e.g. triadic caps at 6). Returns the color list — apply with set/batch material.materialColor.`,
+  {
+    baseColor: z.string().describe('Base color as hex, e.g. "#3366ff"'),
+    count: z.number().int().min(2).max(16).describe("How many colors to generate"),
+    type: z.enum(["monochromatic", "analogous", "complementary", "splitComplementary", "triadic", "square", "rectangular", "circular", "goldenRatio"]),
+  },
+  async ({ baseColor, count, type }) =>
+    runCode("", `__result = api.generateHarmoniousPalette(${jsString(baseColor)}, ${count}, ${jsString(type)});`),
+);
+
+// ---------------------------------------------------------------------------
+// Tool: compositions — comp management
+// ---------------------------------------------------------------------------
+server.tool(
+  "cavalry_compositions",
+  `Manage compositions. Actions:
+- list: every comp (id + name) and the active comp id
+- create: new comp by name → returns its id (does NOT switch to it)
+- setActive: make a comp active (subsequent tools operate on it)
+- layers: structured layer list of a comp — compId optional (active), type optional filter (e.g. "textShape"), topLevel true = only top-of-hierarchy layers
+- preCompose: move the given layers (or the current selection when layerIds is omitted) into a new comp and reference it back in → returns the comp reference layer id
+- new: start a NEW EMPTY SCENE (destructive — requires confirm: true)`,
+  {
+    action: z.enum(["list", "create", "setActive", "layers", "preCompose", "new"]),
+    name: z.string().optional().describe("Comp name (actions: create, preCompose)"),
+    compId: z.string().optional().describe("Comp id (actions: setActive, layers)"),
+    type: z.string().optional().describe('Filter layers by layer type, e.g. "textShape" (action: layers)'),
+    topLevel: z.boolean().optional().describe("Only top-of-hierarchy layers (action: layers, default true)"),
+    layerIds: z.array(z.string()).optional().describe("Layers to pre-compose (action: preCompose; default = current selection)"),
+    confirm: z.boolean().optional().describe("Must be true for action: new"),
+  },
+  async ({ action, name, compId, type, topLevel, layerIds, confirm }) => {
+    switch (action) {
+      case "list":
+        return runCode(
+          "",
+          `(function () {
+var comps = api.getComps();
+var out = [];
+for (var i = 0; i < comps.length; i++) { (function (c) { out.push({ id: c, name: (function () { try { return api.getNiceName(c); } catch (e) { return null; } })() }); })(comps[i]); }
+__result = { comps: out, activeCompId: api.getActiveComp() };
+})();`,
+        );
+      case "create":
+        if (!name) return textResult("create requires name.", true);
+        return runCode("Created comp: ", `__result = api.createComp(${jsString(name)});`);
+      case "setActive":
+        if (!compId) return textResult("setActive requires compId.", true);
+        return runCode("Active comp set: ", `api.setActiveComp(${jsString(compId)}); __result = api.getActiveComp();`);
+      case "layers": {
+        // getCompLayers/getCompLayersOfType read the ACTIVE comp only — when a
+        // compId is given we switch to it and restore the previous comp after.
+        const top = topLevel === false ? "false" : "true";
+        const idsExpr = `(function () {
+var want = ${compId ? jsString(compId) : "null"};
+var prev = null; try { prev = api.getActiveComp(); } catch (e) {}
+if (want && prev && want !== prev) { try { api.setActiveComp(want); } catch (e) {} }
+var ids = [];
+try { ids = ${type ? `api.getCompLayersOfType(${top}, ${jsString(type)})` : `api.getCompLayers(${top})`}; } finally { if (want && prev && want !== prev) { try { api.setActiveComp(prev); } catch (e) {} } }
+return ids;
+})()`;
+        return runCode("", sceneLayersScript(idsExpr));
+      }
+      case "preCompose": {
+        const selectStmt = layerIds?.length ? `api.select(${JSON.stringify(layerIds)});` : "";
+        const nameArg = name ? jsString(name) : "";
+        return runCode(
+          "Pre-composed: ",
+          `(function () {
+${selectStmt}
+__result = api.preCompose(${nameArg});
+})();`,
+        );
+      }
+      case "new":
+        if (confirm !== true) {
+          return textResult("Action \"new\" discards the current scene. Pass confirm: true to proceed.", true);
+        }
+        return runCode("New scene: ", `api.newScene(); __result = "new scene created";`);
+      default:
+        return textResult(`Unknown action ${String(action)}`, true);
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Tool: transform — reset / freeze / centre pivot
+// ---------------------------------------------------------------------------
+server.tool(
+  "cavalry_transform",
+  `Layer transform utilities. Actions: reset (back to defaults, clears frozen transforms), freeze (bake current transform into the shape), centrePivot (move the pivot to the layer's bounding box centre, or its centroid with doCentroid: true).`,
+  {
+    action: z.enum(["reset", "freeze", "centrePivot"]),
+    layerId: z.string().describe("The layer ID"),
+    doCentroid: z.boolean().optional().describe("Centre on the centroid instead of the bounding box (action: centrePivot, default false)"),
+  },
+  async ({ action, layerId, doCentroid }) => {
+    const code =
+      action === "centrePivot"
+        ? `api.centrePivot(${jsString(layerId)}, ${doCentroid === true ? "true" : "false"}); __result = ${jsString(action)};`
+        : action === "reset"
+          ? `api.resetTransform(${jsString(layerId)}); __result = ${jsString(action)};`
+          : `api.freezeTransform(${jsString(layerId)}); __result = ${jsString(action)};`;
+    return runCode("Transform: ", code);
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Tool: layer_types — discover every layer type (incl. effects)
+// ---------------------------------------------------------------------------
+server.tool(
+  "cavalry_layer_types",
+  'List every user-facing layer type in this Cavalry build (api.getAllLayerTypes) as [{type, name}] — the full menu of layers, generators, deformers, modifiers and shaders available for create/batch. Set includeExperimental: true to also list experimental types.',
+  {
+    includeExperimental: z.boolean().optional().describe("Include experimental layer types (default false)"),
+  },
+  async ({ includeExperimental }) =>
+    runCode(
+      "",
+      `__result = api.getAllLayerTypes(${includeExperimental === true ? "true" : "false"});`,
+    ),
+);
+
+// ---------------------------------------------------------------------------
+// Tool: playback — play/stop the timeline in Cavalry
+// ---------------------------------------------------------------------------
+server.tool(
+  "cavalry_playback",
+  "Play or stop timeline playback in the Cavalry viewport (api.play / api.stop). Useful to let the user watch an animation after building it.",
+  {
+    action: z.enum(["play", "stop"]),
+  },
+  async ({ action }) =>
+    runCode("", action === "play" ? `api.play(); __result = "playing";` : `api.stop(); __result = "stopped";`),
 );
 
 // ---------------------------------------------------------------------------

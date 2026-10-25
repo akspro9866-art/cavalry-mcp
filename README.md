@@ -95,29 +95,42 @@ Tools appear as `mcp__cavalry__<tool_name>`.
 
 | Tool | Notes |
 |---|---|
-| `cavalry_ping` | Reachability check |
+| `cavalry_ping` | Reachability check + Cavalry version |
 | `cavalry_batch` | **Many ops in one round trip** — see below |
 | `cavalry_run_script` | Arbitrary JS; assign `__result` to return data |
 | `cavalry_create_layer` | Returns the new layer ID (e.g. `textShape#3`) |
 | `cavalry_set_attribute` | `{"material.materialColor": "#101828"}`, `{"generator.dimensions": [1920, 1080]}` |
 | `cavalry_get_attribute` | Returns the value |
-| `cavalry_get_scene_layers` / `cavalry_get_selected_layers` | Structured JSON: id, type, name, visible, position, in/out, parent |
+| `cavalry_get_scene_layers` / `cavalry_get_selected_layers` | Structured JSON: id, type, name, visible, **selected**, position, in/out, parent |
 | `cavalry_list_attributes` | Every attribute path on a layer (+ optional definitions) — the dictionary that ends attribute guessing |
+| `cavalry_get_connections` | Full wiring readback: incoming connections per attribute + outgoing connections per attribute and `id` — see how effects/modifiers are hooked up before rewiring |
 | `cavalry_select_layers` / `cavalry_delete_layers` | Delete verifies what was actually removed |
 | `cavalry_duplicate_layer` | `api.duplicate`, keeps your selection |
 | `cavalry_rename_layer` | |
+| `cavalry_layer_order` | Z-order without a second layer ID: forward / front / backward / back (selection-safe) |
 | `cavalry_get_bounding_box` | local (default) or world space |
 | `cavalry_import_asset` | Image/sequence/video/audio → asset + layer IDs |
 | `cavalry_add_dynamic_attribute` | |
+| `cavalry_layer_types` | Every layer type in this Cavalry build (`[{type, name}]`, incl. experimental on request) — the full menu of layers/generators/deformers/modifiers/shaders |
+| `cavalry_transform` | reset / freeze / centrePivot |
 
 ### Animation
 
 | Tool | Notes |
 |---|---|
 | `cavalry_keyframe` | Single keyframe **or a whole curve** (`keyframes: [{frame, attributes}]`) in one call |
+| `cavalry_keyframe_edit` | Edit EXISTING animation: delete keyframes at frames, wipe an attribute's (or the whole layer's) animation, set/clear per-keyframe velocity |
 | `cavalry_magic_easing` | Schema-validated enum of the 20 real easing names |
 | `cavalry_get_keyframes` | Keyframe frames per attribute |
 | `cavalry_animate_in` | Presets in one call: `fadeIn`, `fadeUp`, `springUp`, `slideInLeft`, `popIn`, `dropBounce` — keyframed relative to the layer's current position |
+| `cavalry_expression` | Set/read a per-attribute JavaScript expression (evaluated every frame) |
+
+### Style & color
+
+| Tool | Notes |
+|---|---|
+| `cavalry_gradient` | One-call gradient from hex stops (`setGradientFromColors`) |
+| `cavalry_generate_palette` | Harmonious palettes: monochromatic, analogous, complementary, triadic, goldenRatio, … |
 
 ### Composition & timing
 
@@ -125,7 +138,9 @@ Tools appear as `mcp__cavalry__<tool_name>`.
 |---|---|
 | `cavalry_get_composition_info` | resolution, fps, frame range, current frame |
 | `cavalry_set_composition_info` | width/height, fps, inFrame/outFrame |
+| `cavalry_compositions` | list / create / setActive comps, list a comp's layers (optionally by type), preCompose, new scene (confirm-gated) |
 | `cavalry_set_current_frame` / `cavalry_get_current_frame` | |
+| `cavalry_playback` | play / stop the timeline so the user can watch |
 | `cavalry_set_layer_timing` | Trim in/out points, or slide a layer by N frames |
 | `cavalry_reorder_layer` / `cavalry_set_parent` | Stack order and hierarchy |
 
@@ -154,6 +169,9 @@ Tools appear as `mcp__cavalry__<tool_name>`.
       { "frame": 30, "attributes": { "position.y": 0,    "opacity": 100 } }
     ] },
   { "op": "easing", "layerId": "$title", "attrPath": "position.y", "frame": 0, "easingType": "SpringOut" },
+  { "op": "order", "layerId": "$title", "to": "front" },
+  { "op": "gradient", "layerId": "$bg", "attrPath": "generator.gradient", "colors": ["#101828", "#2d3a8c"] },
+  { "op": "expression", "layerId": "$title", "attrPath": "position.x", "expression": "value * 2" },
   { "op": "timing", "layerId": "$bg", "inFrame": 0, "outFrame": 90 }
 ]
 ```

@@ -148,3 +148,39 @@ test("compileBatch: strings with quotes/newlines survive round trip", () => {
   assert.ok(r.results.every((x) => x.ok));
   assert.equal(state.layers.get(r.refs.t)?.name, 'new "name"\nline');
 });
+
+test("compileBatch: order op moves a layer via selection and restores it", () => {
+  const ops: BatchOp[] = [
+    { op: "create", layerType: "basicShape", name: "A", as: "a" },
+    { op: "create", layerType: "basicShape", name: "B", as: "b" },
+    { op: "select", layerIds: ["$a"] },
+    { op: "order", layerId: "$b", to: "front" },
+  ];
+  const { state, result } = runWithMockApi(compileBatch(ops));
+  const r = result as { results: Array<{ ok: boolean; error?: string }> };
+  assert.ok(r.results.every((x) => x.ok), JSON.stringify(r.results));
+  const b = (r as { refs: Record<string, string> }).refs.b;
+  assert.ok(state.order.includes(`bringToFront:${b}`));
+  assert.deepEqual(state.selection, ["basicShape#1"]); // selection restored
+});
+
+test("compileBatch: expression and gradient ops", () => {
+  const ops: BatchOp[] = [
+    { op: "create", layerType: "textShape", name: "T", as: "t" },
+    { op: "expression", layerId: "$t", attrPath: "position.x", expression: "value * 2" },
+    { op: "gradient", layerId: "$t", attrPath: "generator.gradient", colors: ["#ffffff", "#4ffd7a"] },
+  ];
+  const { state, result } = runWithMockApi(compileBatch(ops));
+  const r = result as { results: Array<{ ok: boolean; error?: string }>; refs: Record<string, string> };
+  assert.ok(r.results.every((x) => x.ok), JSON.stringify(r.results));
+  assert.equal(state.expressions.get(`${r.refs.t}:position.x`), "value * 2");
+  assert.deepEqual(state.layers.get(r.refs.t)?.attrs["generator.gradient"], ["#ffffff", "#4ffd7a"]);
+});
+
+test("compileBatch: order op rejects invalid target", () => {
+  const ops = [
+    { op: "create", layerType: "basicShape", name: "A", as: "a" },
+    { op: "order", layerId: "$a", to: "sideways" as never },
+  ];
+  assert.throws(() => compileBatch(ops), /forward, front, backward, back/);
+});
