@@ -1,14 +1,17 @@
 {
   "name": "cavalry-mcp",
-  "version": "2.2.0",
-  "description": "MCP server for Cavalry animation software — batch scene building, keyframe animation with presets and editing, effects/expressions/gradients, composition management, filmstrip previews, video render via render queue, and real data readback. Works with ZCode and any MCP client.",
+  "version": "3.0.0",
+  "description": "Low-token Cavalry MCP and Stallion CLI with batched motion helpers, procedural presets, and atomic Undo.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "cavalry-mcp": "dist/index.js"
+    "cavalry-mcp": "dist/index.js",
+    "stallion": "bin/stallion-cli.mjs"
   },
   "files": [
     "dist",
+    "bin",
+    "types",
     "README.md",
     "LICENSE"
   ],
@@ -16,6 +19,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsc --watch",
+    "pretest": "npm run build",
     "test": "node --import tsx --test",
     "test:watch": "node --import tsx --test --watch"
   },

@@ -22,6 +22,7 @@ export const NO_RESULT_MESSAGE =
 interface CavalryResult {
   ok?: boolean;
   error?: string;
+  stack?: string;
   result?: unknown;
   writeFailed?: string;
 }
@@ -48,7 +49,8 @@ export function parseOutcome(raw: string): Outcome {
     };
   }
   if (out.ok === false) {
-    return { ok: false, text: out.error ?? "unknown Cavalry script error" };
+    const error = out.error ?? "unknown Cavalry script error";
+    return { ok: false, text: out.stack ? `${error}\n${out.stack}` : error };
   }
   const r = out.result;
   if (r === undefined) {

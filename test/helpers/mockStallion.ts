@@ -23,6 +23,7 @@ export interface MockApiState {
   connections: Array<{ sourceId: string; sourceAttr: string; targetId: string; targetAttr: string }>;
   comps: Array<{ id: string; name: string }>;
   activeComp: string;
+  compAttrs: Record<string, unknown>;
 }
 
 export function createMockApiState(): MockApiState {
@@ -36,12 +37,15 @@ export function createMockApiState(): MockApiState {
     connections: [],
     comps: [{ id: "comp#1", name: "Comp 1" }],
     activeComp: "comp#1",
+    compAttrs: {},
   };
 }
 
 export interface MockApiHooks {
   /** Invoked as api.writeToFile — replace to simulate failures. */
   writeToFile?: (filePath: string, content: string, overwriteExisting?: boolean) => boolean;
+  /** Serve seq-matched results over GET /get like Stallion v0.9+. */
+  native?: boolean;
 }
 
 export function buildMockApi(state: MockApiState, hooks: MockApiHooks = {}) {
@@ -57,13 +61,27 @@ export function buildMockApi(state: MockApiState, hooks: MockApiHooks = {}) {
       state.layers.set(id, { type, name: name ?? id, attrs: {} });
       return id;
     },
+    primitive(type: string, name?: string) {
+      return this.create(type, name);
+    },
+    startUndoGroup(name: string) {
+      state.order.push(`startUndo:${name}`);
+    },
+    endUndoGroup() {
+      state.order.push("endUndo");
+    },
     get(id: string, attr: string) {
+      if (id.startsWith("comp#")) {
+        if (!(attr in state.compAttrs)) throw new Error(`attribute ${attr} not found on ${id}`);
+        return state.compAttrs[attr];
+      }
       const l = layer(id);
       if (!(attr in l.attrs)) throw new Error(`attribute ${attr} not found on ${id}`);
       return l.attrs[attr];
     },
     set(id: string, attrs: Record<string, unknown>) {
-      Object.assign(layer(id).attrs, attrs);
+      if (id.startsWith("comp#")) Object.assign(state.compAttrs, attrs);
+      else Object.assign(layer(id).attrs, attrs);
       return true;
     },
     connect(sourceId: string, sourceAttr: string, targetId: string, targetAttr: string, force?: boolean) {
@@ -300,10 +318,12 @@ export function buildMockApi(state: MockApiState, hooks: MockApiHooks = {}) {
       state.order.push(`reorder:${id}:${underId}`);
     },
     setInFrame(id: string, f: number) {
-      layer(id).attrs.inFrame = f;
+      if (id.startsWith("comp#")) state.compAttrs.inFrame = f;
+      else layer(id).attrs.inFrame = f;
     },
     setOutFrame(id: string, f: number) {
-      layer(id).attrs.outFrame = f;
+      if (id.startsWith("comp#")) state.compAttrs.outFrame = f;
+      else layer(id).attrs.outFrame = f;
     },
     offsetLayerTime(id: string, delta: number) {
       layer(id);
@@ -383,22 +403,34 @@ export interface MockStallion {
 export function startMockStallion(hooks: MockApiHooks = {}): Promise<MockStallion> {
   const state = createMockApiState();
   const api = buildMockApi(state, hooks);
+  let served = JSON.stringify({ kind: "status", stallion: "0.9.0", cavalry: "2.8.0" });
   const server = http.createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on("data", (c: Buffer) => chunks.push(c));
     req.on("end", () => {
       if (req.method === "POST" && req.url === "/post") {
         try {
-          const payload = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { code: string };
+          const payload = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { code: string; seq?: string };
           const ctx = vm.createContext({ api });
-          new vm.Script(payload.code).runInContext(ctx);
-        } catch (e) {
-          // the real bridge logs to Cavalry's log window; the wrapped script's
-          // own try/catch does the error reporting via the result file
+          if (hooks.native) {
+            try {
+              new vm.Script(`var __result; var __returned = (${payload.code}); if (typeof __result === "undefined") __result = __returned;`).runInContext(ctx);
+              const result = (ctx as { __result?: unknown }).__result;
+              served = JSON.stringify({ kind: "result", type: "__stallion_result__", seq: payload.seq, ok: true, ...(result === undefined ? {} : { result }) });
+            } catch (err) {
+              served = JSON.stringify({ kind: "result", type: "__stallion_result__", seq: payload.seq, ok: false, error: String(err), stack: err instanceof Error ? err.stack : undefined });
+            }
+          } else {
+            new vm.Script(payload.code).runInContext(ctx);
+          }
+        } catch {
+          // Wrapped script errors are delivered through the active result channel.
         }
-        // fixed ack body, like the real Stallion
         res.writeHead(200, { "Content-Type": "text/plain" });
         res.end("ack");
+      } else if (hooks.native && req.method === "GET" && req.url === "/get") {
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end(served);
       } else {
         res.writeHead(404);
         res.end();

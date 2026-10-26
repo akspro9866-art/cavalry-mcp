@@ -13,8 +13,10 @@ function tmpResultPath(): string {
 
 function configFor(port: number, resultPath: string, overrides: Partial<StallionConfig> = {}): StallionConfig {
   return {
+    url: `http://127.0.0.1:${port}`,
     host: "127.0.0.1",
     port,
+    token: "",
     httpTimeoutMs: 2000,
     resultTimeoutMs: 3000,
     resultPath,
@@ -30,6 +32,21 @@ test("round trip: __result comes back through the result file with seq matching"
     const o = parseOutcome(raw);
     assert.equal(o.ok, true);
     assert.equal(o.text, "42");
+  } finally {
+    await mock.close();
+  }
+});
+
+test("native Stallion protocol returns seq-matched structured results", async () => {
+  const mock = await startMockStallion({ native: true });
+  try {
+    const cfg = configFor(mock.port, tmpResultPath());
+    const raw = await runScriptWithResult(`return _mg.text("Hi", 42);`, cfg, { helpers: true });
+    const outcome = parseOutcome(raw);
+    assert.equal(outcome.ok, true);
+    assert.match(outcome.text, /textShape#/);
+    assert.equal(mock.state.order[0], "startUndo:AI Motion Batch");
+    assert.equal(mock.state.order.at(-1), "endUndo");
   } finally {
     await mock.close();
   }
@@ -58,7 +75,7 @@ test("script exceptions are captured as ok:false", async () => {
     const raw = await runScriptWithResult(`throw new Error("boom from cavalry");`, cfg);
     const o = parseOutcome(raw);
     assert.equal(o.ok, false);
-    assert.equal(o.text, "boom from cavalry");
+    assert.match(o.text, /boom from cavalry/);
   } finally {
     await mock.close();
   }
@@ -96,7 +113,7 @@ test("concurrent calls are serialized and each gets its own result", async () =>
       runScriptWithResult(`api.__order("b"); __result = "B";`, cfg),
       runScriptWithResult(`api.__order("c"); __result = "C";`, cfg),
     ]);
-    assert.deepEqual(mock.state.order, ["a", "b", "c"]);
+    assert.deepEqual(mock.state.order.filter(step => ["a", "b", "c"].includes(step)), ["a", "b", "c"]);
     assert.equal(parseOutcome(a).text, "A");
     assert.equal(parseOutcome(b).text, "B");
     assert.equal(parseOutcome(c).text, "C");
@@ -147,8 +164,8 @@ test("config: per-process default result path and split timeouts (with legacy fa
     delete process.env.CAVALRY_TIMEOUT_MS;
     let cfg = loadConfig();
     assert.match(cfg.resultPath, new RegExp(`cavalry-mcp-result-${process.pid}\\.json$`));
-    assert.equal(cfg.httpTimeoutMs, 10000);
-    assert.equal(cfg.resultTimeoutMs, 120000);
+    assert.equal(cfg.httpTimeoutMs, 5000);
+    assert.equal(cfg.resultTimeoutMs, 5000);
 
     process.env.CAVALRY_HTTP_TIMEOUT_MS = "1500";
     process.env.CAVALRY_RESULT_TIMEOUT_MS = "90000";

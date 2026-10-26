@@ -1,36 +1,46 @@
 # cavalry-mcp
 
-MCP server that connects [ZCode](https://zcode.z.ai) (or any MCP client — Claude Desktop, Cursor, …) to [Cavalry](https://cavalry.scenegroup.co) animation software. Build whole scenes in **one round trip** with batch operations, animate with keyframes/presets/Magic Easing, preview the timeline as a **filmstrip image returned inline**, start **video renders** through Cavalry's render queue — and **read real data back**: layer IDs, attribute values, bounding boxes, composition info.
+Low-token Cavalry automation through Stallion. Build complete motion rigs in one atomic script, use procedural presets, or bypass MCP schemas entirely with the CLI.
 
 ```
-ZCode <--MCP (stdio)--> cavalry-mcp <--HTTP POST--> Stallion <---> Cavalry
-                            ^
-                            └── results come back via api.writeToFile()
+Agent <--MCP/CLI--> cavalry-mcp <--POST /post + GET /get--> Stallion <---> Cavalry
 ```
 
-## Why this fork is different
+## Three-tool core
 
-This is a rebuilt and heavily fixed version of [kacperchlebowicz/Cavalry-mcp](https://github.com/kacperchlebowicz/Cavalry-mcp) (written for Claude Desktop). The original had a fundamental problem: **Stallion's `/post` endpoint always responds with a fixed ack body, so no tool could ever return data** — `create_layer` lost the layer ID, every "get" tool was blind, and several API calls used names that don't exist in Cavalry.
+Only these tools are exposed by default:
 
-This version fixes all of that and rebuilds the workflow around the bridge's real constraint: every script POST costs roughly a second (Stallion picks up scripts at ~1 Hz), so the server is designed to do **fewer, richer round trips**.
+| Tool | Purpose |
+|---|---|
+| `cavalry_run_script` | Batched JavaScript with `_mg` helpers, structured readback, and one Undo group |
+| `cavalry_inspect` | Bounded id/name/niceName/type summaries for `selection` or `roots` |
+| `cavalry_run_preset` | One-shot procedural rigs with custom JSON parameters |
 
-- **Batch operations (`cavalry_batch`)** — create/keyframe/connect/… dozens of ops in ONE call, with `$refs` so ops can use layer IDs created earlier in the same batch. Each op is individually error-isolated.
-- **Two-way readback.** Tool scripts capture results and errors, write them to a JSON file via `api.writeToFile()`, and the node side matches them by a per-call UUID. Every tool returns real data.
-- **Serialized bridge queue + per-process result file.** Cavalry executes scripts on one thread; calls are queued so results can never interleave, and each server instance uses its own result file — two MCP clients on one machine don't clobber each other.
-- **Visual feedback loop.** `cavalry_render_png` returns the frame **inline as an image block**, and `cavalry_render_filmstrip` composites N sampled frames across the timeline into one contact sheet — judge motion in a single round trip.
-- **Video output.** `cavalry_render_video` drives Cavalry's render queue in the background (`addRenderQueueItem` + `backgroundRender`), with `get_render_queue` / `cancel_render` to manage it.
-- **Correct API surface**, verified against Cavalry 2.8 and the official scripting docs (several of these cost hours to discover):
-  - Shape fill color is `material.materialColor`, not `fill.color`.
-  - Shape size is `generator.dimensions: [w, h]`; the rectangle generator type is `rectangleShape` (there is no `colorPlane` layer type — use a basicShape).
-  - Save As is `api.saveSceneAs(path)`; `api.saveScene()` takes no arguments.
-  - Playhead is `api.setFrame()` / `api.getFrame()`; `api.setCurrentFrame` doesn't exist.
-  - Layer timing is `api.setInFrame/setOutFrame/offsetLayerTime`; hierarchy is `api.reorder/parent/unParent`.
-  - Assets: `api.loadAsset(path, isSequence)` then `api.addAssetToComp(assetId)`.
-  - Introspection: `api.getAttributes(id)` lists every attribute path — no more guessing.
-  - `api.getBoundingBox(id, worldSpace)` takes two arguments; world position = position + local centre.
-  - Magic Easing names are `SlowIn`, `SlowOut`, `SlowInSlowOut`, `BounceIn/Out`, `SpringIn/Out`, `OvershootOut`, `None`, … — **there is no `EaseInOut` or `Linear`** (the schema rejects them), and easing applies to a keyframe's *outgoing* segment.
-  - With the `autokey` preference on, a static `api.set()` on an already-animated attribute silently creates a keyframe at the playhead — prefer `keyframe()`.
-- **Error transparency.** Script exceptions are captured and returned with `isError: true` instead of vanishing; connection failures name the likely cause (Stallion not running).
+```js
+const title = _mg.text("MOTION", 110, "#FFFFFF");
+const rig = _mg.subMesh(title, 1, 8);
+_mg.kf(title, "scale", [[0, 0], [30, 100]]);
+return { title, ...rig };
+```
+
+Set `ENABLE_LEGACY_TOOLS=true` to restore the original granular tools. They are intentionally off by default to minimize MCP schema tokens and network round-trips.
+
+## Zero-MCP CLI
+
+```bash
+node bin/stallion-cli.mjs -e 'return _mg.text("FAST", 96);'
+node bin/stallion-cli.mjs -f ./rig.js
+node bin/stallion-cli.mjs -p kinetic_text '{"text":"HELLO"}'
+node bin/stallion-cli.mjs --sel
+```
+
+Install the package to expose the `stallion` command. Run `npm run build` after changing source because the CLI imports `dist/`.
+
+## Procedural presets
+
+Canonical presets are `kinetic_text`, `bento_cards`, `dot_matrix_bg`, `number_counter`, and `pulse_oscillator`. Aliases `bento_grid`, `spring_card`, `counter_rig`, and `bg_grid` are also accepted. Every execution is an isolated IIFE wrapped in `api.startUndoGroup("AI Motion Batch")` / `api.endUndoGroup()` with `try/finally`.
+
+Cavalry and `_mg` TypeScript declarations live in `types/cavalry.d.ts`; repository-specific automation rules are in `AGENTS.md` and `.cursorrules`.
 
 ## Prerequisites
 
@@ -82,14 +92,16 @@ Tools appear as `mcp__cavalry__<tool_name>`.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CAVALRY_HOST` | `127.0.0.1` | Stallion host |
-| `CAVALRY_PORT` | `8080` | Stallion port |
-| `CAVALRY_HTTP_TIMEOUT_MS` | `10000` | Timeout for the HTTP ack |
-| `CAVALRY_RESULT_TIMEOUT_MS` | `120000` | How long to wait for a script's result file (renders are slow) |
+| `STALLION_URL` | `http://127.0.0.1:8080` | Stallion base URL |
+| `STALLION_TOKEN` | empty | Optional bearer token matching `stallion.json` |
+| `CAVALRY_HOST` / `CAVALRY_PORT` | `127.0.0.1` / `8080` | Legacy URL configuration |
+| `CAVALRY_HTTP_TIMEOUT_MS` | `5000` | Abort timeout for every HTTP request |
+| `CAVALRY_RESULT_TIMEOUT_MS` | `5000` | Overall structured-result wait; increase for slow renders |
 | `CAVALRY_TIMEOUT_MS` | *(legacy)* | Sets both timeouts at once |
-| `CAVALRY_RESULT_PATH` | `<tmpdir>/cavalry-mcp-result-<pid>.json` | Result file (per-process by default) |
+| `CAVALRY_RESULT_PATH` | `<tmpdir>/cavalry-mcp-result-<pid>.json` | Legacy fallback result file |
+| `ENABLE_LEGACY_TOOLS` | `false` | Restore the original granular MCP tools |
 
-## Available tools
+## Legacy tools (`ENABLE_LEGACY_TOOLS=true`)
 
 ### Scene building & data
 
@@ -181,7 +193,7 @@ One tool call builds the whole scene (a per-op script would cost ~1 s per step i
 ## Tips
 
 - Renders are async inside Cavalry: the PNG reflects the scene state when the render *completes*. Make scene changes and renders in separate tool calls.
-- Each bridge call costs ~1 s (Stallion picks up scripts at ~1 Hz) — prefer `cavalry_batch`, multi-frame `cavalry_keyframe`, and `cavalry_render_filmstrip` over repeated small calls.
+- Avoid granular request loops: batch scene work into one `cavalry_run_script` or CLI execution and use `_mg`/procedural nodes instead of per-layer keyframe spam.
 - `api.saveSceneAs` tears down the Stallion script context — after a Save As you must re-run **Scripts > Stallion** before further tool calls.
 - Layer IDs are strings like `textShape#3`, numbered per type across the scene.
 - `cavalry_render_video` output format follows the render queue item's settings — configure defaults once in Cavalry's Render window; `outputPath` sets the item's filename on a best-effort basis.

@@ -17,6 +17,7 @@ const mock = await startMockStallion();
 const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "cav-e2e-"));
 process.env.CAVALRY_PORT = String(mock.port);
 process.env.CAVALRY_RESULT_PATH = path.join(workdir, "result.json");
+process.env.ENABLE_LEGACY_TOOLS = "true";
 
 const { server } = await import("../src/index.js");
 const [clientToServer, serverToClient] = InMemoryTransport.createLinkedPair();

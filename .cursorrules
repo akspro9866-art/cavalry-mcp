@@ -1,0 +1,6 @@
+Never loop single-action calls; batch into one cavalry_run_script or node bin/stallion-cli.mjs -e "..." execution.
+Always use _mg.* helpers and procedural duplicator, subMesh, stagger, noise, oscillator, and magicEasing nodes instead of manual per-layer keyframe spam.
+Return compact values. Use cavalry_inspect for IDs and never dump the full scene graph.
+When tweaking existing layers, use const id = _mg.sel() (api.getSelection()[0]).
+Prefer built-in presets and one atomic execution. Do not nest Undo groups.
+Never substitute After Effects APIs; follow types/cavalry.d.ts.
