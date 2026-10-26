@@ -27,9 +27,10 @@ function compile(name: PresetName, options: PresetOptions): string {
       return `const o = ${o};
 const start = o.startFrame ?? 0, duration = o.duration ?? 30;
 const textId = _mg.text(o.text ?? "KINETIC", o.fontSize ?? 96, o.color ?? "#FFFFFF", o.attrs ?? {});
-const rig = _mg.subMesh(textId, o.level ?? 1, o.staggerOffset ?? 8, o.easing ?? "SpringOut");
-_mg.kf(textId, "scale", [[start, 0], [start + duration, 100]], o.easing ?? "SpringOut");
-_mg.kf(textId, "position.y", [[start, o.distance ?? 40], [start + duration, 0]], o.easing ?? "SpringOut");
+const rig = _mg.subMesh(textId, o.level ?? 1, o.staggerOffset ?? 8);
+_mg.kf(rig.subMeshId, "shapeScale.x", [[start, 0], [start + duration, 1]], o.easing ?? "SpringOut");
+_mg.kf(rig.subMeshId, "shapeScale.y", [[start, 0], [start + duration, 1]], o.easing ?? "SpringOut");
+_mg.kf(rig.subMeshId, "shapePosition.y", [[start, o.distance ?? 40], [start + duration, 0]], o.easing ?? "SpringOut");
 return { preset: "kinetic_text", textId, ...rig };`;
     case "bento_cards":
       return `const o = ${o};
@@ -37,14 +38,17 @@ const start = o.startFrame ?? 0, duration = o.duration ?? 30;
 const cardId = _mg.shape("rectangle", o.name ?? "Bento Card", {
   "generator.dimensions": o.cardSize ?? [320, 180],
   "generator.cornerRadius": o.radius ?? 24,
-  "material.materialColor": o.fill ?? "#181B24",
-  "material.strokeColor": o.stroke ?? "#3D4354",
-  "material.strokeWidth": o.strokeWidth ?? 2
+  "material.materialColor": o.fill ?? "#181B24"
 });
+const strokeId = _mg.layer("strokeMaterial", "Card Stroke", {
+  strokeColor: o.stroke ?? "#3D4354",
+  width: o.strokeWidth ?? 2
+});
+_mg.wire(strokeId, "id", cardId, "stroke");
 const dupId = _mg.duplicator(cardId, "grid", o.count ?? [o.columns ?? 3, o.rows ?? 2], o.size ?? [1100, 650], o.duplicatorAttrs ?? {});
 _mg.kf(cardId, "scale", [[start, 0], [start + duration, 100]], o.easing ?? "QuartOut");
 _mg.kf(cardId, "position.y", [[start, o.distance ?? 60], [start + duration, 0]], o.easing ?? "QuartOut");
-return { preset: "bento_cards", cardId, dupId };`;
+return { preset: "bento_cards", cardId, strokeId, dupId };`;
     case "dot_matrix_bg":
       return `const o = ${o};
 const dotId = _mg.shape("ellipse", o.name ?? "Matrix Dot", {
@@ -53,8 +57,8 @@ const dotId = _mg.shape("ellipse", o.name ?? "Matrix Dot", {
   opacity: o.opacity ?? 60
 });
 const dupId = _mg.duplicator(dotId, "grid", o.count ?? [20, 12], o.size ?? [1600, 900]);
-const scaleNoiseId = _mg.layer("noise", "Dot Scale Noise", { strength: o.scaleStrength ?? 35, frequency: o.frequency ?? 0.08, seed: o.seed ?? 1 });
-const opacityNoiseId = _mg.layer("noise", "Dot Opacity Noise", { strength: o.opacityStrength ?? 30, frequency: o.frequency ?? 0.08, seed: (o.seed ?? 1) + 1 });
+const scaleNoiseId = _mg.layer("noise", "Dot Scale Noise", { strength: o.scaleStrength ?? 35, "generator.frequency": o.frequency ?? 0.08, "generator.seed": o.seed ?? 1 });
+const opacityNoiseId = _mg.layer("noise", "Dot Opacity Noise", { strength: o.opacityStrength ?? 30, "generator.frequency": o.frequency ?? 0.08, "generator.seed": (o.seed ?? 1) + 1 });
 _mg.wire(scaleNoiseId, "id", dotId, "scale");
 _mg.wire(opacityNoiseId, "id", dotId, "opacity");
 return { preset: "dot_matrix_bg", dotId, dupId, scaleNoiseId, opacityNoiseId };`;
@@ -62,9 +66,14 @@ return { preset: "dot_matrix_bg", dotId, dupId, scaleNoiseId, opacityNoiseId };`
       return `const o = ${o};
 const start = o.startFrame ?? 0, duration = o.duration ?? 60;
 const textId = _mg.text(o.label ?? "0", o.fontSize ?? 96, o.color ?? "#FFFFFF", o.textAttrs ?? {});
-const counterId = _mg.layer("value2Text", "Number Counter", { decimals: o.decimals ?? 0, prefix: o.prefix ?? "", suffix: o.suffix ?? "" });
-_mg.wire(counterId, "id", textId, "string");
-_mg.kf(counterId, "value", [[start, o.startVal ?? 0], [start + duration, o.endVal ?? 100]], o.easing ?? "SlowInSlowOut");
+const counterId = _mg.layer("stringGenerator", "Number Counter", {
+  "generator.precision": o.decimals ?? 0,
+  "generator.length": o.length ?? 1,
+  prefix: o.prefix ?? "",
+  suffix: o.suffix ?? ""
+});
+_mg.wire(counterId, "id", textId, "text");
+_mg.kf(counterId, "generator.number", [[start, o.startVal ?? 0], [start + duration, o.endVal ?? 100]], o.easing ?? "SlowInSlowOut");
 return { preset: "number_counter", textId, counterId };`;
     case "pulse_oscillator":
       return `const o = ${o};

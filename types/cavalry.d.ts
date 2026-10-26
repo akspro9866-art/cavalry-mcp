@@ -31,7 +31,7 @@ interface MotionGraphicsHelpers {
   text(str: string, size?: number, color?: string, extraAttrs?: CavalryAttributes): string;
   wire(srcId: string, srcAttr: string, dstId: string, dstAttr: string): void;
   deform(targetId: string, deformerType: string, name: string, attrs?: CavalryAttributes): string;
-  subMesh(textId: string, level?: 0 | 1 | 2, staggerOffset?: number, easing?: string): {
+  subMesh(textId: string, level?: 0 | 1 | 2, staggerOffset?: number): {
     subMeshId: string;
     staggerId: string;
   };

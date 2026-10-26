@@ -5,17 +5,20 @@ export const ATOMIC_SCRIPT_MARKER = "/* cavalry-mcp:atomic */";
 /** One isolated scope and one Undo step; Stallion captures return/errors. */
 export function wrapAtomicScript(code: string, withHelpers = false): string {
   return `${ATOMIC_SCRIPT_MARKER}
-(() => {
-  api.startUndoGroup("AI Motion Batch");
+__result = (() => {
+  const __undo = typeof api.startUndoGroup === "function";
+  if (__undo) api.startUndoGroup("AI Motion Batch");
   try {
-    return (() => {
+    const __returnedResult = (() => {
       ${withHelpers ? MG_HELPERS_SOURCE : ""}
       return (() => {
 ${code}
       })();
     })();
+    if (typeof __result === "undefined") __result = __returnedResult;
+    return __result;
   } finally {
-    api.endUndoGroup();
+    if (__undo) api.endUndoGroup();
   }
 })()`;
 }

@@ -20,9 +20,9 @@ const _mg = {
   },
   text(str, size = 80, color = "#FFFFFF", extraAttrs = {}) {
     return _mg.layer("textShape", String(str).slice(0, 40) || "Text", Object.assign({
-      string: str,
+      text: str,
       fontSize: size,
-      alignment: 1,
+      horizontalAlignment: 1,
       verticalAlignment: 1,
       "material.materialColor": color
     }, extraAttrs));
@@ -35,10 +35,13 @@ const _mg = {
     _mg.wire(id, "id", targetId, "deformers");
     return id;
   },
-  subMesh(textId, level = 1, staggerOffset = 8, easing = "SpringOut") {
-    const subMeshId = _mg.layer("subMesh", "Text Segments", { mode: level });
-    const staggerId = _mg.layer("stagger", "Segment Stagger", { timeOffset: staggerOffset, easing });
-    _mg.wire(staggerId, "id", subMeshId, "timeOffset");
+  subMesh(textId, level = 1, staggerOffset = 8) {
+    const subMeshId = _mg.layer("subMesh", "Text Segments", {
+      levelMode: level,
+      shapeTimeOffset: staggerOffset
+    });
+    const staggerId = _mg.layer("stagger", "Segment Stagger", { offset: staggerOffset });
+    _mg.wire(staggerId, "id", subMeshId, "shapeTimeOffset");
     _mg.wire(subMeshId, "id", textId, "deformers");
     return { subMeshId, staggerId };
   },
