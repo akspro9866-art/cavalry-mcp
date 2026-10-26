@@ -71,7 +71,9 @@ test("all canonical presets execute through the same pipeline", async () => {
   const target = [...mock.state.layers.keys()][0];
   const pulse = await call("cavalry_run_preset", { name: "pulse_oscillator", params: { targetId: target } });
   assert.equal(pulse.isError, undefined, text(pulse));
-  assert.equal(JSON.parse(text(pulse)).targetId, target);
+  const pulseResult = JSON.parse(text(pulse));
+  assert.equal(pulseResult.target, target);
+  assert.match(pulseResult.oscillator, /oscillator#/);
 });
 
 test("runtime errors include exact messages", async () => {

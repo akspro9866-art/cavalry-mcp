@@ -38,7 +38,36 @@ Install the package to expose the `stallion` command. Run `npm run build` after 
 
 ## Procedural presets
 
-Canonical presets are `kinetic_text`, `bento_cards`, `dot_matrix_bg`, `number_counter`, and `pulse_oscillator`. Aliases `bento_grid`, `spring_card`, `counter_rig`, and `bg_grid` are also accepted. Every execution is an isolated IIFE wrapped in `api.startUndoGroup("AI Motion Batch")` / `api.endUndoGroup()` with `try/finally`.
+The registry ships **120 presets across 14 categories** — a complete SaaS motion-graphics library. Every preset is a self-contained rig executed as one isolated IIFE inside `api.startUndoGroup("AI Motion Batch")` / `api.endUndoGroup()` with `try/finally`. The script returns a map of role → layer ID plus `preset: "<id>"`, so you can keep animating the pieces it built.
+
+| # | Category | Label | Presets |
+|---|---|---|---|
+| 1 | `typography` | Hero Typography & Messaging | 5 |
+| 2 | `ui_mockups` | UI Components & Product Mockups | 5 |
+| 3 | `data_viz` | Data Visualization & KPI | 5 |
+| 4 | `polish_camera` | Backgrounds, Transitions & Camera | 5 |
+| 5 | `ai_agents` | AI Agents, LLMs & Copilot | 10 |
+| 6 | `devtools_cli` | Developer Tools, Code & Terminal | 10 |
+| 7 | `collab_presence` | Multiplayer Collaboration & Presence | 10 |
+| 8 | `workflows_nodes` | Workflow Automation & Node Graphs | 10 |
+| 9 | `fintech_billing` | Fintech, Payments & Billing | 10 |
+| 10 | `security_auth` | Security, Auth & Identity | 10 |
+| 11 | `cloud_devops` | Cloud, DevOps & Infrastructure | 10 |
+| 12 | `voice_audio_video` | Voice, Audio & Video | 10 |
+| 13 | `onboarding_plg` | Onboarding & Product-Led Growth | 10 |
+| 14 | `social_proof_cta` | Social Proof & Call-to-Action | 10 |
+
+```bash
+node bin/stallion-cli.mjs --list                  # all 120 presets
+node bin/stallion-cli.mjs --list fintech_billing  # one category
+node bin/stallion-cli.mjs -p payment_card_checkout '{"amount":"$99.00","accentColor":"#22D3EE"}'
+```
+
+From MCP, call `cavalry_run_preset` with `{ "preset": "payment_card_checkout", "params": { ... } }`. Presets are stored as category packs in `src/presets/packs/cat01…cat14`, composed from shared factories in `src/presets/rig_builders.ts`, and can also be driven programmatically via `compilePreset(id, params)` / `listPresets(category?)` from `src/presets/cavalry_snippets.ts` (the lightweight listing keeps the three-tool MCP schema small).
+
+Every preset runs with default `{}` parameters. Parameters declare types `string`, `int`, `double`, `bool`, `color` (hex string) and `json` (object/array). Accepted aliases: `bento_grid` and `spring_card` → `bento_cards`, `counter_rig` → `number_counter`, `bg_grid` → `dot_matrix_bg`.
+
+Categories 9–14 and presets 59–60 extend the original 58-preset brief (its spec stopped at preset 58). They follow the same conventions — `_rb` factories, verified Cavalry 2.8 attribute paths, floor-pinned bars, one guarded Undo group — and their layouts/parameters were designed to be consistent with the brief rather than transcribed from it.
 
 Cavalry and `_mg` TypeScript declarations live in `types/cavalry.d.ts`; repository-specific automation rules are in `AGENTS.md` and `.cursorrules`.
 
@@ -207,7 +236,7 @@ npm run build   # tsc -> dist/
 npm test        # unit tests + bridge integration against a mock Stallion + full MCP e2e
 ```
 
-The test suite runs the real server against an in-memory MCP client and a mock Stallion (an HTTP server executing scripts in a `node:vm` sandbox with a modelled `api`), so bridge behavior — seq matching, the write-failure retry, queue serialization, timeouts — is covered without Cavalry installed. CI runs build + tests on Linux and Windows.
+The test suite runs the real server against an in-memory MCP client and a mock Stallion (an HTTP server executing scripts in a `node:vm` sandbox with a modelled `api`), so bridge behavior — seq matching, the write-failure retry, queue serialization, timeouts — is covered without Cavalry installed. `test/library.test.ts` additionally compiles and executes all 120 presets with defaults and typed overrides against the mock bridge. CI runs build + tests on Linux and Windows.
 
 ## Credits
 

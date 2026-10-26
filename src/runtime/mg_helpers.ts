@@ -1,5 +1,7 @@
+import { RB_HELPERS_SOURCE } from "../presets/rig_builders.js";
+
 /** JavaScript injected into Cavalry; this module is never executed by Node. */
-export const MG_HELPERS_SOURCE = String.raw`
+const MG_BASE_SOURCE = String.raw`
 const _mg = {
   comp(w = 1920, h = 1080, fps = 60, endFrame = 180, bgColor = "#0B0C10") {
     const id = api.getActiveComp();
@@ -8,14 +10,17 @@ const _mg = {
     api.setOutFrame(id, endFrame);
     return id;
   },
+  set(id, attrs) {
+    return _rb.set(id, attrs);
+  },
   shape(type, name, attrs = {}) {
     const id = api.primitive(type, name);
-    if (Object.keys(attrs).length) api.set(id, attrs);
+    if (Object.keys(attrs).length) _rb.set(id, attrs);
     return id;
   },
   layer(type, name, attrs = {}) {
     const id = api.create(type, name);
-    if (Object.keys(attrs).length) api.set(id, attrs);
+    if (Object.keys(attrs).length) _rb.set(id, attrs);
     return id;
   },
   text(str, size = 80, color = "#FFFFFF", extraAttrs = {}) {
@@ -46,23 +51,17 @@ const _mg = {
     return { subMeshId, staggerId };
   },
   duplicator(shapeId, distType = "grid", count = [5, 5], size = [1200, 700], attrs = {}) {
-    const dupId = _mg.layer("duplicator", "Duplicator");
-    _mg.wire(shapeId, "id", dupId, "shapes");
-    const generator = distType.endsWith("Distribution") ? distType : distType + "Distribution";
-    api.setGenerator(dupId, "generator", generator);
-    api.set(dupId, Object.assign({ "generator.count": count, "generator.size": size }, attrs));
+    const linear = String(distType).indexOf("linear") === 0;
+    const dupId = _rb.dup(shapeId, {
+      distribution: linear ? "linear" : "grid",
+      count,
+      size,
+      attrs: attrs || {}
+    });
     return dupId;
   },
   kf(id, attr, framesAndValues, magicEase = "SpringOut") {
-    const ids = [];
-    for (let i = 0; i < framesAndValues.length; i++) {
-      const pair = framesAndValues[i];
-      const key = { };
-      key[attr] = pair[1];
-      ids.push(api.keyframe(id, pair[0], key));
-      if (i < framesAndValues.length - 1) api.magicEasing(id, attr, pair[0], magicEase);
-    }
-    return ids;
+    return _rb.kf(id, attr, framesAndValues, magicEase);
   },
   selection() {
     return api.getSelection();
@@ -72,3 +71,6 @@ const _mg = {
   }
 };
 `;
+
+/** _mg legacy DSL + _rb rig builders, injected into one script scope. */
+export const MG_HELPERS_SOURCE = `${MG_BASE_SOURCE}\n${RB_HELPERS_SOURCE}`;
