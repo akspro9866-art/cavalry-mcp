@@ -33,6 +33,153 @@ const _rb = {
   },
   EASE_VALID: ["SlowIn","SlowOut","SlowInSlowOut","VerySlowIn","VerySlowOut","VerySlowInVerySlowOut","SpringIn","SpringOut","SpringInSpringOut","SmallSpringIn","SmallSpringOut","SmallSpringInSmallSpringOut","AnticipateIn","OvershootOut","AnticipateInOvershootOut","BounceIn","BounceOut","BounceInBounceOut","None","Custom"],
 
+  /**
+   * Design-system colours used across the preset catalogue. When a theme is
+   * active every literal from this table is retinted, so _mg.applyTheme reaches
+   * all 120 presets through the one colour funnel (_rb.c) without rewriting
+   * their scripts. With no theme the table is inert and rendering is identical.
+   */
+  BASE_COLOR_ROLES: {
+    "#10B981": "primary",
+    "#38BDF8": "secondary",
+    "#F59E0B": "accent",
+    "#FBBF24": "accentBright",
+    "#F8FAFC": "text",
+    "#FFFFFF": "white",
+    "#94A3B8": "muted",
+    "#64748B": "mutedDeep",
+    "#0B0C10": "background",
+    "#0B0F14": "background",
+    "#0F141B": "background",
+    "#0F172A": "backgroundAlt",
+    "#111827": "surface",
+    "#151A23": "surface",
+    "#1E293B": "surface",
+    "#1F2937": "surfaceAlt",
+    "#334155": "border",
+    "#27303F": "borderStrong",
+    "#2A3648": "borderStrong",
+    "#3D4354": "borderAlt",
+    "#3B3356": "borderAlt",
+    "#E2E8F0": "textSoft",
+    "#CBD5E1": "textSoft",
+    "#475569": "mutedStrong",
+    "#04120C": "primaryDeep",
+    "#052E22": "primaryDeep",
+    "#065F46": "primaryDeep",
+    "#A78BFA": "violetSoft",
+    "#C4B5FD": "violetSoft",
+    "#EF4444": "danger",
+    "#8B5CF6": "violet",
+    "#F472B6": "pink",
+    "#34D399": "mint",
+    "#000000": "black"
+  },
+
+  /** Tokens resolve even before a theme is applied, so @primary is always safe. */
+  THEME_FALLBACKS: {
+    primary: "#10B981",
+    secondary: "#38BDF8",
+    accent: "#F59E0B",
+    accentBright: "#FBBF24",
+    text: "#F8FAFC",
+    white: "#FFFFFF",
+    muted: "#94A3B8",
+    mutedDeep: "#64748B",
+    background: "#0B0C10",
+    backgroundAlt: "#0F172A",
+    surface: "#111827",
+    surfaceAlt: "#1F2937",
+    border: "#334155",
+    borderStrong: "#27303F",
+    borderAlt: "#3D4354",
+    danger: "#EF4444",
+    violet: "#8B5CF6",
+    violetSoft: "#A78BFA",
+    pink: "#F472B6",
+    mint: "#34D399",
+    black: "#000000",
+    textSoft: "#CBD5E1",
+    mutedStrong: "#475569",
+    primaryDeep: "#065F46"
+  },
+
+  RADIUS_FALLBACKS: { sm: 8, md: 16, lg: 24, pill: 999 },
+
+  theme() {
+    try { return globalThis.__mgTheme || null; } catch (e) { return null; }
+  },
+
+  /** Parse any accepted colour form to an uppercase "#RRGGBB" string. */
+  hex(value) {
+    if (value && typeof value === "object") {
+      const part = (n) => {
+        let s = Math.max(0, Math.min(255, Math.round(Number(n) || 0))).toString(16).toUpperCase();
+        return s.length < 2 ? "0" + s : s;
+      };
+      return "#" + part(value.r) + part(value.g) + part(value.b);
+    }
+    let s = String(value == null ? "" : value).replace("#", "").trim();
+    if (s.length === 3) s = s.charAt(0) + s.charAt(0) + s.charAt(1) + s.charAt(1) + s.charAt(2) + s.charAt(2);
+    return "#" + s.slice(0, 6).toUpperCase();
+  },
+
+  /**
+   * Resolve "@role" tokens and theme-mapped base colours to a colour value.
+   * Objects pass through the same lookup so retroactive recolouring can reuse
+   * the live RGBA value read back from api.get.
+   */
+  themeColor(value) {
+    if (value == null) return value;
+    const theme = this.theme();
+    if (value && typeof value === "object") {
+      if (value.token != null || value.theme != null || value.role != null) {
+        const role = String(value.token != null ? value.token : (value.theme != null ? value.theme : value.role)).replace(/^[@$]/, "");
+        if (theme && theme.colors && theme.colors[role] != null) return theme.colors[role];
+        if (this.THEME_FALLBACKS[role] != null) return this.THEME_FALLBACKS[role];
+        return value;
+      }
+      const role = this.BASE_COLOR_ROLES[this.hex(value)];
+      if (role && theme && theme.colors && theme.colors[role] != null) return theme.colors[role];
+      return value;
+    }
+    let text = String(value);
+    if (text.charAt(0) === "@" || text.charAt(0) === "$") {
+      const role = text.slice(1);
+      if (theme && theme.colors && theme.colors[role] != null) return theme.colors[role];
+      if (this.THEME_FALLBACKS[role] != null) return this.THEME_FALLBACKS[role];
+      return value;
+    }
+    const raw = text.replace("#", "").trim();
+    const role = this.BASE_COLOR_ROLES[this.hex(text)];
+    if (role && theme && theme.colors && theme.colors[role] != null) {
+      let themed = theme.colors[role];
+      // Preserve an explicit alpha channel from the original literal.
+      if (raw.length >= 8 && typeof themed === "string") {
+        const themedRaw = themed.replace("#", "");
+        if (themedRaw.length === 6) themed = "#" + themedRaw + raw.slice(6, 8);
+      }
+      return themed;
+    }
+    return value;
+  },
+
+  /** Parse a colour without consulting (or re-mapping through) the theme. */
+  rawColor(value) {
+    if (value && typeof value === "object") {
+      return { r: value.r | 0, g: value.g | 0, b: value.b | 0, a: value.a == null ? 255 : value.a | 0 };
+    }
+    let s = String(value == null ? "#FFFFFF" : value).replace("#", "");
+    if (s.length === 3) s = s.charAt(0) + s.charAt(0) + s.charAt(1) + s.charAt(1) + s.charAt(2) + s.charAt(2);
+    return {
+      r: parseInt(s.substr(0, 2), 16) || 0,
+      g: parseInt(s.substr(2, 2), 16) || 0,
+      b: parseInt(s.substr(4, 2), 16) || 0,
+      a: s.length >= 8 ? (parseInt(s.substr(6, 2), 16) || 0) : 255
+    };
+  },
+
+
   ease(name) {
     if (!name) return "SlowInSlowOut";
     if (this.EASE_VALID.indexOf(name) >= 0) return name;
@@ -40,17 +187,7 @@ const _rb = {
   },
 
   c(value) {
-    if (value && typeof value === "object") {
-      return { r: value.r | 0, g: value.g | 0, b: value.b | 0, a: value.a == null ? 255 : value.a | 0 };
-    }
-    let s = String(value == null ? "#FFFFFF" : value).replace("#", "");
-    if (s.length === 3) s = s[0] + s[0] + s[1] + s[1] + s[2] + s[2];
-    return {
-      r: parseInt(s.substr(0, 2), 16) || 0,
-      g: parseInt(s.substr(2, 2), 16) || 0,
-      b: parseInt(s.substr(4, 2), 16) || 0,
-      a: s.length >= 8 ? (parseInt(s.substr(6, 2), 16) || 0) : 255
-    };
+    return this.rawColor(this.themeColor(value));
   },
 
   one(key, value) { const d = {}; d[key] = value; return d; },
@@ -78,10 +215,13 @@ const _rb = {
   set(id, attrs) {
     if (!attrs) return id;
     const compound = ["material.materialColor","strokeColor","glowColor","position","scale","rotation","generator.dimensions","generator.size","generator.count","generator.radius","generator.width","font"];
+    const colorKeys = ["material.materialColor","strokeColor","glowColor"];
     const scalar = {};
     const keys = Object.keys(attrs);
     for (let i = 0; i < keys.length; i++) {
-      const k = keys[i], v = attrs[k];
+      const k = keys[i];
+      let v = attrs[k];
+      if (v != null && colorKeys.indexOf(k) >= 0) v = this.c(v);
       if (compound.indexOf(k) >= 0 || (v && typeof v === "object")) api.set(id, this.one(k, v));
       else scalar[k] = v;
     }
@@ -98,7 +238,18 @@ const _rb = {
 
   pos(id, x, y) { api.set(id, { position: [x, y] }); return id; },
   dims(id, w, h) { api.set(id, { "generator.dimensions": [w, h] }); return id; },
-  rad(id, r) { api.set(id, { "generator.cornerRadius": r }); return id; },
+  rad(id, r) {
+    const theme = this.theme();
+    if (typeof r === "string" && (r.charAt(0) === "@" || r.charAt(0) === "$")) {
+      const token = r.slice(1);
+      const fromTheme = theme && theme.radius ? theme.radius[token] : null;
+      r = fromTheme != null ? fromTheme : (this.RADIUS_FALLBACKS[token] != null ? this.RADIUS_FALLBACKS[token] : 16);
+    }
+    const scale = theme && theme.radius && Number(theme.radius.scale) > 0 ? Number(theme.radius.scale) : 1;
+    if (typeof r === "number" && isFinite(r)) r = r * scale;
+    api.set(id, { "generator.cornerRadius": r });
+    return id;
+  },
   scale(id, x, y) { api.set(id, { scale: [x, y == null ? x : y] }); return id; },
   rot(id, deg) { api.set(id, { rotation: deg }); return id; },
   opacity(id, v) { api.set(id, { opacity: v }); return id; },
@@ -224,14 +375,19 @@ const _rb = {
   text(str, size, o) {
     o = o || {};
     this.fresh();
+    const theme = this.theme();
+    const type = theme && theme.typography ? theme.typography : null;
+    let fontSize = size || 60;
+    if (type && Number(type.scale) > 0) fontSize = fontSize * Number(type.scale);
     const id = api.create("textShape", o.name || String(str).slice(0, 32) || "Text");
     api.set(id, {
       text: String(str),
-      fontSize: size || 60,
+      fontSize: fontSize,
       horizontalAlignment: o.align == null ? 1 : o.align,
       verticalAlignment: o.valign == null ? 1 : o.valign
     });
-    if (o.font) api.set(id, { font: { font: o.font, style: o.style || "Regular" } });
+    const font = o.font || (type ? type.font : null);
+    if (font) api.set(id, { font: { font: font, style: o.style || (type && type.style ? type.style : "Regular") } });
     this.fill(id, o.color || "#F8FAFC");
     if (o.alpha != null) this.alpha(id, o.alpha);
     if (o.opacity != null) this.opacity(id, o.opacity);

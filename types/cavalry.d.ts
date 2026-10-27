@@ -24,6 +24,24 @@ interface CavalryAPI {
   writeToFile(path: string, contents: string, overwrite?: boolean): boolean;
 }
 
+interface MotionGraphicsThemeTokens {
+  colors?: Record<string, string>;
+  typography?: { font?: string; style?: string; scale?: number };
+  radius?: Record<string, number>;
+  palette?: boolean;
+  apply?: boolean;
+  target?: "selection" | "preset" | "comp" | string;
+  ids?: string[];
+  recolor?: boolean;
+  registerOnly?: boolean;
+}
+
+interface MotionGraphicsThemeState {
+  colors: Record<string, string>;
+  typography: { font?: string; style?: string; scale?: number };
+  radius: Record<string, number>;
+}
+
 interface MotionGraphicsHelpers {
   comp(w?: number, h?: number, fps?: number, endFrame?: number, bgColor?: string): string;
   shape(type: string, name: string, attrs?: CavalryAttributes): string;
@@ -43,6 +61,14 @@ interface MotionGraphicsHelpers {
     attrs?: CavalryAttributes,
   ): string;
   kf(id: string, attr: string, framesAndValues: CavalryKeyframe[], magicEase?: string): string[];
+  theme(): MotionGraphicsThemeState | null;
+  applyTheme(tokens: MotionGraphicsThemeTokens | null): Record<string, unknown>;
+  modulate(
+    layerId: string | null,
+    attrPath: string | string[],
+    config?: string | Record<string, unknown>,
+  ): Record<string, unknown>;
+  connectDynamic(sourceId: string, targetId: string, styleSpec?: Record<string, unknown>): Record<string, unknown>;
   selection(): string[];
   sel(): string | undefined;
 }

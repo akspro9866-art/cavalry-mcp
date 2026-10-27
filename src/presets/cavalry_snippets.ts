@@ -89,6 +89,10 @@ export function compilePreset(name: string, options: PresetOptions = {}): string
 const __tracked = {};
 function track(key, id) { __tracked[key] = id; return id; }
 ${def.code}
+const __presetId = ${JSON.stringify(def.id)};
+// Remember the tracked roots across executions so _mg.patchSelected can retune
+// a preset after the selection has changed. Guarded for bare test harnesses.
+if (typeof _mg !== "undefined" && _mg.__rememberPreset) _mg.__rememberPreset(__presetId, __tracked);
 return Object.assign({}, __tracked, { preset: ${JSON.stringify(def.id)} });`;
 }
 

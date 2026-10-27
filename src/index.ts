@@ -3,16 +3,19 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { compilePreset, PRESET_NAMES } from "./presets/cavalry_snippets.js";
-import { executeMotionScript } from "./runtime/execute.js";
+import { executeMotionScript, type ScriptOutcome } from "./runtime/execute.js";
 import { compileInspection } from "./runtime/inspect.js";
 import { registerLegacyTools } from "./legacy.js";
 
 const server = new McpServer({ name: "cavalry-mcp", version: "3.0.0" });
 
-function result(outcome: { ok: boolean; text: string }) {
+function result(outcome: ScriptOutcome) {
   return {
     content: [{ type: "text" as const, text: outcome.text }],
     ...(!outcome.ok ? { isError: true } : {}),
+    // Spatial/error feedback without changing the text payload that scripts
+    // and existing clients parse.
+    ...(outcome.state ? { _meta: { telemetry: outcome.state } } : {}),
   };
 }
 

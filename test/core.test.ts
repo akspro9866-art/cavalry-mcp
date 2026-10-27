@@ -45,7 +45,7 @@ test("run_script injects _mg and returns values in one Undo group", async () => 
     code: `const id = _mg.shape("rectangle", "Fast", { opacity: 80 }); return { id };`,
   });
   assert.equal(res.isError, undefined, text(res));
-  assert.match(JSON.parse(text(res)).id, /rectangle#/);
+  assert.match(JSON.parse(text(res)).id, /basicShape#/);
   assert.equal(mock.state.order[0], "startUndo:AI Motion Batch");
   assert.equal(mock.state.order.at(-1), "endUndo");
 });

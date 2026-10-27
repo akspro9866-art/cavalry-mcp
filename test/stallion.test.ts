@@ -83,9 +83,12 @@ test("script exceptions are captured as ok:false", async () => {
 
 test("if the first writeToFile fails, the minimal writeFailed payload still reaches the node side", async () => {
   let failedOnce = false;
+  const resultPath = tmpResultPath();
   const mock = await startMockStallion({
     writeToFile: (filePath, content) => {
-      if (!failedOnce) {
+      // Telemetry writes to its own state file; this test simulates the
+      // result-file write failing, not every filesystem write.
+      if (!failedOnce && filePath === resultPath) {
         failedOnce = true;
         throw new Error("disk full");
       }
@@ -94,7 +97,7 @@ test("if the first writeToFile fails, the minimal writeFailed payload still reac
     },
   });
   try {
-    const cfg = configFor(mock.port, tmpResultPath());
+    const cfg = configFor(mock.port, resultPath);
     const raw = await runScriptWithResult(`__result = "x";`, cfg);
     const o = parseOutcome(raw);
     assert.equal(o.ok, false);

@@ -36,6 +36,24 @@ node bin/stallion-cli.mjs --sel
 
 Install the package to expose the `stallion` command. Run `npm run build` after changing source because the CLI imports `dist/`.
 
+## Editing and review pipeline
+
+The CLI flags and `_mg` methods below are additive; the three-tool MCP surface is unchanged.
+
+| Capability | How to call it |
+|---|---|
+| In-place restyle/retime without rebuilding layers | `_mg.patchSelected({ fill, text, fontSize, opacity, shiftKeyframes, easing, duplicator })` |
+| Beat-aware animation | `stallion --audio-beats track.wav [--beats-out beats.json]`, then `_mg.syncToFrames(beats, ...)` |
+| Multi-scene MP4 | `stallion --render-promo plan.json [--out promo.mp4] [--audio track.mp3] [--workdir dir] [--dry-run]` |
+| Procedural behaviours | `_mg.modulate(id, "position", { type: "spring" \| "organicFloat" \| "staggerFalloff" \| "oscillator" \| "noise" })` |
+| Dynamic connectors | `_mg.connectDynamic(sourceId, targetId, { color, width, curve })` |
+| Global theme binding | `_mg.applyTheme({ colors, typography, radius })`, `_mg.applyTheme(null)` to clear |
+| Frame previews + collisions | `stallion --verify-frames 0,30,60` or `0-60:10` |
+
+Every execution still runs in one Undo group. After the group closes, the wrapper writes `~/.cavalry-mcp/last-execution-state.json` (status, error stack, created layers, selection, comp info and world-space bounding boxes); MCP returns the same snapshot as `_meta.telemetry`. `--verify-frames` renders PNGs into `~/.cavalry-mcp/previews` and warns when non-background layers overlap at the sampled frames — it restores the original playhead and active comp afterwards.
+
+Promo rendering needs a local `ffmpeg` (pass `--ffmpeg <path>`); beat analysis also honours `FFMPEG_PATH`. A pre-analysed JSON beat file lets `--audio-beats` run without ffmpeg.
+
 ## Procedural presets
 
 The registry ships **120 presets across 14 categories** — a complete SaaS motion-graphics library. Every preset is a self-contained rig executed as one isolated IIFE inside `api.startUndoGroup("AI Motion Batch")` / `api.endUndoGroup()` with `try/finally`. The script returns a map of role → layer ID plus `preset: "<id>"`, so you can keep animating the pieces it built.
@@ -128,6 +146,9 @@ Tools appear as `mcp__cavalry__<tool_name>`.
 | `CAVALRY_RESULT_TIMEOUT_MS` | `5000` | Overall structured-result wait; increase for slow renders |
 | `CAVALRY_TIMEOUT_MS` | *(legacy)* | Sets both timeouts at once |
 | `CAVALRY_RESULT_PATH` | `<tmpdir>/cavalry-mcp-result-<pid>.json` | Legacy fallback result file |
+| `CAVALRY_STATE_PATH` | `~/.cavalry-mcp/last-execution-state.json` | Telemetry snapshot written after every Undo group |
+| `CAVALRY_PREVIEW_DIR` | `~/.cavalry-mcp/previews` | Output directory for `--verify-frames` PNGs |
+| `FFMPEG_PATH` | `ffmpeg` | ffmpeg binary used for beat decoding |
 | `ENABLE_LEGACY_TOOLS` | `false` | Restore the original granular MCP tools |
 
 ## Legacy tools (`ENABLE_LEGACY_TOOLS=true`)
