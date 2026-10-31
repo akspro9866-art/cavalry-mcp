@@ -43,6 +43,10 @@ The CLI flags and `_mg` methods below are additive; the three-tool MCP surface i
 | Capability | How to call it |
 |---|---|
 | In-place restyle/retime without rebuilding layers | `_mg.patchSelected({ fill, text, fontSize, opacity, shiftKeyframes, easing, duplicator })` |
+| Inline vector from a traced SVG | `_mg.svg(parent, { path })`, or `_mg.svg(parent, { d, name, pos, scale })` when `api.createEditable` exists |
+| Magic-easing boundary move | `_mg.ease(id, "position.y", { inFrame, outFrame, from, to, magicEasing })`; a raw `bezier` maps to the nearest accepted curve, never `Custom` |
+| Deterministic stagger | `_mg.stagger([id, ...], { attr, inFrame, outFrame, from, to, delayFrames, easing })` |
+| Compact in-place drift patch | `_mg.patch({ target, attrs | delta, frame })`; `_mg.patchSelected` delegates geometry deltas here |
 | Beat-aware animation | `stallion --audio-beats track.wav [--beats-out beats.json]`, then `_mg.syncToFrames(beats, ...)` |
 | Multi-scene MP4 | `stallion --render-promo plan.json [--out promo.mp4] [--audio track.mp3] [--workdir dir] [--dry-run]` |
 | Procedural behaviours | `_mg.modulate(id, "position", { type: "spring" \| "organicFloat" \| "staggerFalloff" \| "oscillator" \| "noise" })` |
@@ -51,6 +55,8 @@ The CLI flags and `_mg` methods below are additive; the three-tool MCP surface i
 | Frame previews + collisions | `stallion --verify-frames 0,30,60` or `0-60:10` |
 
 Every execution still runs in one Undo group. After the group closes, the wrapper writes `~/.cavalry-mcp/last-execution-state.json` (status, error stack, created layers, selection, comp info and world-space bounding boxes); MCP returns the same snapshot as `_meta.telemetry`. `--verify-frames` renders PNGs into `~/.cavalry-mcp/previews` and warns when non-background layers overlap at the sampled frames — it restores the original playhead and active comp afterwards.
+
+The four procedural primitives (`svg`, `ease`, `stagger`, `patch`) are the runtime contract for `refclone`'s Stage 4/5 scripts: the identical call signatures are emitted by `refclone/src/dsl/_mg.mjs`, and refclone's cross-repo contract test executes its compiled ten-layer script and a framed patch script against this prelude and the headless mock API. `_mg.ease` accepts Cavalry names or refclone aliases (`ExpoOut`, `CubicInOut`, `BackOut`, ...); "Custom" is deliberately never sent to `api.magicEasing`.
 
 Promo rendering needs a local `ffmpeg` (pass `--ffmpeg <path>`); beat analysis also honours `FFMPEG_PATH`. A pre-analysed JSON beat file lets `--audio-beats` run without ffmpeg.
 

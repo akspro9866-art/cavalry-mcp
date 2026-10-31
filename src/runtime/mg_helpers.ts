@@ -72,6 +72,292 @@ const _mg = {
     return _rb.kf(id, attr, framesAndValues, magicEase);
   },
 
+  /**
+   * Clip-space handles for the magic-easing curves this build accepts. "Custom"
+   * is deliberately absent: api.magicEasing only accepts a Custom keyframe with a
+   * separate expression argument, so _mg.ease never sends that name.
+   */
+  EASE_CURVES: {
+    None: [0, 0, 1, 1],
+    SlowIn: [0.42, 0, 1, 1],
+    SlowOut: [0, 0, 0.58, 1],
+    SlowInSlowOut: [0.42, 0, 0.58, 1],
+    VerySlowIn: [0.76, 0, 1, 1],
+    VerySlowOut: [0, 0, 0.24, 1],
+    VerySlowInVerySlowOut: [0.76, 0, 0.24, 1],
+    SpringIn: [0.64, 0, 0.78, 0.4],
+    SpringOut: [0.22, 1.4, 0.36, 1],
+    SpringInSpringOut: [0.5, 1.4, 0.5, 0.4],
+    AnticipateIn: [0.36, 0, 0.66, -0.56],
+    OvershootOut: [0.34, 1.56, 0.64, 1],
+    AnticipateInOvershootOut: [0.5, -0.4, 0.5, 1.4],
+    BounceOut: [0.34, 1.56, 0.64, 1]
+  },
+
+  /** Friendly names emitted by refclone that Cavalry spells differently. */
+  EASE_ALIASES: {
+    QuarticIn: "SlowIn", QuarticOut: "SlowOut", QuarticInOut: "SlowInSlowOut",
+    CubicIn: "SlowIn", CubicOut: "SlowOut", CubicInOut: "SlowInSlowOut",
+    ExpoIn: "VerySlowIn", ExpoOut: "VerySlowOut", ExpoInOut: "VerySlowInVerySlowOut",
+    BackIn: "AnticipateIn", BackOut: "OvershootOut", BackInOut: "AnticipateInOvershootOut",
+    Linear: "None"
+  },
+
+  /** Normalize a requested easing to a name this Cavalry build accepts. */
+  __easeName(name) {
+    if (!name) return "SlowInSlowOut";
+    const alias = this.EASE_ALIASES[name];
+    if (alias) return alias;
+    if (this.EASE_CURVES[name]) return name;
+    return _rb.ease(name);
+  },
+
+  /** Closest supported curve to cubic-bezier handles, by RMS over 11 samples. */
+  __nearestEase(handles) {
+    if (!handles || handles.length !== 4) return "SlowInSlowOut";
+    const bx = [Number(handles[0]) || 0, Number(handles[2]) || 0];
+    const by = [Number(handles[1]) || 0, Number(handles[3]) || 0];
+    const sample = (p, t) => {
+      let lo = 0, hi = 1, x = t;
+      for (let i = 0; i < 12; i++) {
+        x = (lo + hi) / 2;
+        const value = 3 * (1 - x) * (1 - x) * x * p[0] + 3 * (1 - x) * x * x * p[1] + x * x * x;
+        if (value < t) lo = x; else hi = x;
+      }
+      return 3 * (1 - x) * (1 - x) * x * p[2] + 3 * (1 - x) * x * x * p[3] + x * x * x;
+    };
+    const curve = [bx[0], by[0], bx[1], by[1]];
+    let best = "SlowInSlowOut";
+    let bestScore = Infinity;
+    const names = Object.keys(this.EASE_CURVES);
+    for (let i = 0; i < names.length; i++) {
+      const preset = this.EASE_CURVES[names[i]];
+      let score = 0;
+      for (let s = 0; s <= 10; s++) {
+        const delta = sample(preset, s / 10) - sample(curve, s / 10);
+        score += delta * delta;
+      }
+      if (score < bestScore) { bestScore = score; best = names[i]; }
+    }
+    return best;
+  },
+
+  /**
+   * Two boundary keyframes plus a supported magic-easing curve.
+   *
+   * spec = { inFrame, outFrame, from, to, magicEasing?, easing?, bezier? }
+   *   easing: { kind: "preset", name } or { kind: "bezier", handles }
+   * A cubic-bezier without a matching preset resolves to the nearest accepted
+   * Cavalry curve; "Custom" is never sent to api.magicEasing.
+   * attr may be "position" or "scale" to drive both axes.
+   */
+  ease(id, attr, spec) {
+    spec = spec || {};
+    const inFrame = Math.round(Number(spec.inFrame));
+    const outFrame = Math.round(Number(spec.outFrame));
+    if (!isFinite(inFrame) || !isFinite(outFrame) || inFrame === outFrame) {
+      throw new Error("_mg.ease requires distinct integer inFrame and outFrame values");
+    }
+    const from = Number(spec.from);
+    const to = Number(spec.to);
+    if (!isFinite(from) || !isFinite(to)) throw new Error("_mg.ease requires finite from and to values");
+    const easing = spec.easing || null;
+    let name = spec.magicEasing || (easing && easing.kind === "preset" ? easing.name : null);
+    const handles = spec.bezier || (easing && easing.kind === "bezier" ? easing.handles : null);
+    const resolved = name ? this.__easeName(name) : this.__nearestEase(handles);
+    const attrs = attr === "position" || attr === "scale" ? [attr + ".x", attr + ".y"] : [attr];
+    for (let i = 0; i < attrs.length; i++) {
+      _rb.kf(id, attrs[i], [[inFrame, from], [outFrame, to]], resolved);
+    }
+    return { id: id, attrs: attrs, easing: resolved, inFrame: inFrame, outFrame: outFrame };
+  },
+
+  /**
+   * Deterministic staggered timing for a set of layers (or a group id, expanded
+   * to its children). Each follower gets its own eased boundary keyframes offset
+   * by delayFrames; no deformer wiring is guessed for arbitrary layer types.
+   *
+   * spec = { attr, from, to, inFrame, outFrame, delayFrames, easing?, magicEasing?, bezier? }
+   */
+  stagger(ids, spec) {
+    spec = spec || {};
+    let list = Array.isArray(ids) ? ids.slice() : [ids];
+    if (list.length === 1) {
+      let children = [];
+      try { children = api.getChildren(list[0]) || []; } catch (e) { children = []; }
+      if (children.length) list = children.slice();
+    }
+    if (list.length < 2) throw new Error("_mg.stagger needs at least two member layers");
+    if (!spec.attr) throw new Error("_mg.stagger requires an attr (for example position.y)");
+    const delay = Math.round(Number(spec.delayFrames == null ? 4 : spec.delayFrames));
+    if (!(delay >= 1)) throw new Error("_mg.stagger delayFrames must be at least 1");
+    const inFrame = Math.round(Number(spec.inFrame));
+    const outFrame = Math.round(Number(spec.outFrame));
+    const applied = [];
+    for (let i = 0; i < list.length; i++) {
+      const offset = i * delay;
+      this.ease(list[i], spec.attr, {
+        inFrame: inFrame + offset, outFrame: outFrame + offset,
+        from: spec.from, to: spec.to,
+        magicEasing: spec.magicEasing, easing: spec.easing, bezier: spec.bezier
+      });
+      applied.push({ id: list[i], inFrame: inFrame + offset, outFrame: outFrame + offset });
+    }
+    return { ids: list, attr: spec.attr, delayFrames: delay, applied: applied };
+  },
+
+  /**
+   * In-place delta / absolute adjustment for existing layer ids. Never creates,
+   * duplicates or recreates layers, so the composition and playhead are kept.
+   *
+   * spec = {
+   *   target?: "<layerId>", ids?: string[],
+   *   attrs?: { "position.x": 120 }, delta?: { "position.x": 4 },
+   *   frame?: 42, shiftKeyframes?, easing?
+   * }
+   * With frame, values are written through api.keyframe at that frame so an
+   * animated attribute is corrected where the render failed, not at the playhead.
+   */
+  patch(spec) {
+    const list = Array.isArray(spec) ? spec : [spec];
+    const results = [];
+    for (let i = 0; i < list.length; i++) {
+      const entry = list[i] || {};
+      let targets;
+      if (Array.isArray(entry.ids) && entry.ids.length) targets = entry.ids.slice();
+      else if (entry.target != null) targets = [String(entry.target)];
+      else targets = this.__patchTargets(entry);
+      const frame = entry.frame == null ? null : Math.round(Number(entry.frame));
+      const changes = [];
+      for (let t = 0; t < targets.length; t++) {
+        const id = targets[t];
+        const attrs = {};
+        if (entry.attrs) {
+          const keys = Object.keys(entry.attrs);
+          for (let k = 0; k < keys.length; k++) attrs[keys[k]] = entry.attrs[keys[k]];
+        }
+        if (entry.delta) {
+          const keys = Object.keys(entry.delta);
+          for (let k = 0; k < keys.length; k++) {
+            const current = Number(api.get(id, keys[k]));
+            attrs[keys[k]] = (isFinite(current) ? current : 0) + Number(entry.delta[keys[k]] || 0);
+          }
+        }
+        if (Object.keys(attrs).length) {
+          if (frame != null && isFinite(frame)) api.keyframe(id, frame, attrs);
+          else this.set(id, attrs);
+          changes.push({ id: id, attrs: attrs, frame: frame });
+        }
+        if (entry.shiftKeyframes != null || entry.easing != null) {
+          this.patchSelected({ ids: [id], shiftKeyframes: entry.shiftKeyframes, easing: entry.easing });
+        }
+      }
+      results.push({ patched: changes.length, changes: changes });
+    }
+    return results.length === 1 ? results[0] : results;
+  },
+
+  /**
+   * Build an editable vector layer from a VTracer SVG file (verified asset route)
+   * or an inline path d (cavalry.Path + api.createEditable). Parent, position
+   * and scale are applied to the created layer; the composition is untouched.
+   *
+   * spec = { path?, d?, name?, pos?: {x,y}, scale? }
+   */
+  svg(parent, spec) {
+    spec = spec || {};
+    let id = null;
+    if (spec.path) {
+      const asset = api.loadAsset(String(spec.path), false);
+      id = api.addAssetToComp(asset);
+    } else if (spec.d != null) {
+      if (typeof api.createEditable !== "function") {
+        throw new Error("_mg.svg: this Cavalry build has no api.createEditable; pass spec.path so the verified SVG asset route can run");
+      }
+      id = api.createEditable(this.__svgPath(spec.d), spec.name || "Vector");
+    } else {
+      throw new Error("_mg.svg requires spec.path or spec.d");
+    }
+    if (spec.name) {
+      try { api.rename(id, String(spec.name)); } catch (e) {}
+    }
+    if (parent != null && parent !== id) {
+      try {
+        if (String(parent) !== String(api.getActiveComp())) api.parent(id, parent);
+      } catch (e) {}
+    }
+    if (spec.pos) this.set(id, { position: { x: Number(spec.pos.x) || 0, y: Number(spec.pos.y) || 0 } });
+    if (spec.scale != null) this.set(id, { scale: Number(spec.scale) || 1 });
+    return id;
+  },
+
+  /** Parse the SVG path subset VTracer emits into a cavalry.Path. */
+  __svgPath(d) {
+    if (typeof cavalry === "undefined" || typeof cavalry.Path !== "function") {
+      throw new Error("_mg.svg: new cavalry.Path() is unavailable in this build; pass a .svg asset path instead");
+    }
+    const path = new cavalry.Path();
+    if (typeof path.moveTo !== "function" || typeof path.lineTo !== "function") {
+      throw new Error("_mg.svg: cavalry.Path has no moveTo/lineTo in this build; pass a .svg asset path instead");
+    }
+    const tokens = String(d).match(/[a-zA-Z]|-?\d*\.?\d+(?:[eE][-+]?\d+)?/g) || [];
+    let i = 0;
+    let cmd = "M";
+    let x = 0, y = 0, startX = 0, startY = 0;
+    const num = () => Number(tokens[i++]);
+    while (i < tokens.length) {
+      if (/^[a-zA-Z]$/.test(tokens[i])) {
+        cmd = tokens[i];
+        i++;
+        if (cmd === "Z" || cmd === "z") {
+          if (typeof path.closePath === "function") path.closePath();
+          else if (typeof path.close === "function") path.close();
+          x = startX; y = startY;
+          continue;
+        }
+      }
+      const upper = cmd.toUpperCase();
+      const rel = cmd !== upper;
+      if (upper === "M" || upper === "L") {
+        const nx = num(), ny = num();
+        x = rel ? x + nx : nx;
+        y = rel ? y + ny : ny;
+        if (upper === "M") { startX = x; startY = y; path.moveTo(x, y); cmd = rel ? "l" : "L"; }
+        else path.lineTo(x, y);
+      } else if (upper === "H") {
+        const nx = num();
+        x = rel ? x + nx : nx;
+        path.lineTo(x, y);
+      } else if (upper === "V") {
+        const ny = num();
+        y = rel ? y + ny : ny;
+        path.lineTo(x, y);
+      } else if (upper === "C") {
+        const x1 = rel ? x + num() : num();
+        const y1 = rel ? y + num() : num();
+        const x2 = rel ? x + num() : num();
+        const y2 = rel ? y + num() : num();
+        const nx = rel ? x + num() : num();
+        const ny = rel ? y + num() : num();
+        if (typeof path.curveTo !== "function") throw new Error("_mg.svg: cavalry.Path has no curveTo in this build");
+        path.curveTo(x1, y1, x2, y2, nx, ny);
+        x = nx; y = ny;
+      } else if (upper === "Q") {
+        const qx = rel ? x + num() : num();
+        const qy = rel ? y + num() : num();
+        const nx = rel ? x + num() : num();
+        const ny = rel ? y + num() : num();
+        if (typeof path.quadTo === "function") path.quadTo(qx, qy, nx, ny);
+        else if (typeof path.curveTo === "function") path.curveTo(qx, qy, nx, ny, nx, ny);
+        else throw new Error("_mg.svg: cavalry.Path has no quadratic/curve support in this build");
+        x = nx; y = ny;
+      } else {
+        i++;
+      }
+    }
+    return path;
+  },
+
   /** The currently applied theme, or null. */
   theme() {
     return _rb.theme();
@@ -585,6 +871,9 @@ const _mg = {
    */
   patchSelected(spec) {
     spec = spec || {};
+    // Geometry deltas need a read-modify-write per layer; _mg.patch owns that
+    // route and delegates styling back here.
+    if (spec.delta) return this.patch(spec);
     const roots = this.__patchTargets(spec);
     const tracked = this.presetRoots() || { byKey: {} };
     const keyById = {};

@@ -63,6 +63,9 @@ function positionOf(layer) {
   if (Array.isArray(attrs.position)) {
     return { x: Number(attrs.position[0]) || 0, y: Number(attrs.position[1]) || 0 };
   }
+  if (attrs.position && typeof attrs.position === "object") {
+    return { x: Number(attrs.position.x) || 0, y: Number(attrs.position.y) || 0 };
+  }
   return {
     x: Number(attrs["position.x"]) || 0,
     y: Number(attrs["position.y"]) || 0,
