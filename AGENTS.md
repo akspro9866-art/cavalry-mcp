@@ -7,5 +7,8 @@
 - Prefer `cavalry_run_preset` or `stallion -p` for standard rigs. The library has 120 presets in 14 category packs (`src/presets/packs/cat01…cat14`); discover IDs with `node bin/stallion-cli.mjs --list [category]`.
 - New presets go in the matching category pack, compose shared `_rb.*` factories from `src/presets/rig_builders.ts`, and must run with default `{}` params. Add a coverage case to `test/library.test.ts` when the param types or rig surface change.
 - Scripts are isolated IIFEs and grouped into one Undo step. Do not add another Undo group.
+- Build scenes with `cavalry_batch`, not one call per layer. Reserve `cavalry_run_script` for logic the op list cannot express.
+- Render sequences with `cavalry_render_frames` (or `--render-frames`) in chunks, never a loop of single-frame calls. If a chunk times out, do not re-send it: the bridge is still running. Raise `perFrameMs`, lower `chunkFrames`, and rerun — the resume list comes from `render-progress.json`.
+- Run `cavalry_probe_api` (or `--probe`) before trusting an attribute path or API name. `api.getName` does not exist, `api.getNiceName` does; text attributes are `fontSize`/`letterSpacing`/`wordSpacing`/`font`, not `text.*`. Cache the report instead of re-guessing.
 - Keep `ENABLE_LEGACY_TOOLS` unset unless a client explicitly needs the original granular tools.
 - Use Cavalry API methods only. Never substitute After Effects APIs; `types/cavalry.d.ts` is the local contract.

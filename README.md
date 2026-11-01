@@ -6,7 +6,7 @@ Low-token Cavalry automation through Stallion. Build complete motion rigs in one
 Agent <--MCP/CLI--> cavalry-mcp <--POST /post + GET /get--> Stallion <---> Cavalry
 ```
 
-## Three-tool core
+## Core tools
 
 Only these tools are exposed by default:
 
@@ -15,6 +15,10 @@ Only these tools are exposed by default:
 | `cavalry_run_script` | Batched JavaScript with `_mg` helpers, structured readback, and one Undo group |
 | `cavalry_inspect` | Bounded id/name/niceName/type summaries for `selection` or `roots` |
 | `cavalry_run_preset` | One-shot procedural rigs with custom JSON parameters |
+| `cavalry_batch` | Many scene operations compiled into one atomic round trip |
+| `cavalry_verify_frames` | Render a few frames, get back collisions and missing previews |
+| `cavalry_render_frames` | Render a whole range in deadline-sized chunks, resumable |
+| `cavalry_probe_api` | Ask this live build which functions and attributes actually exist |
 
 ```js
 const title = _mg.text("MOTION", 110, "#FFFFFF");
@@ -25,6 +29,54 @@ return { title, ...rig };
 
 Set `ENABLE_LEGACY_TOOLS=true` to restore the original granular tools. They are intentionally off by default to minimize MCP schema tokens and network round-trips.
 
+### Sequence rendering (`cavalry_render_frames`)
+
+`api.renderPNGFrame` renders whatever frame the playhead is on, and a Stallion
+request that overruns the result deadline does **not** stop running — so the
+frame-by-frame route pays ~1 s of bridge latency per frame, and the
+"just send 36 frames" route loses its whole result when the deadline expires.
+This tool sits between them:
+
+- chunk size is derived from a per-frame cost estimate against the deadline
+  (`chunkFrames = floor((timeoutMs - overheadMs) / perFrameMs)`, 1–40), and both
+  the result deadline and the POST deadline are raised per call instead of
+  relying on `CAVALRY_RESULT_TIMEOUT_MS`;
+- every chunk is one atomic script that restores the playhead and active comp
+  afterwards, so a render never leaves the user's timeline somewhere else;
+- the files on disk are the progress signal: after an unanswered chunk the tool
+  waits `graceMs` for late files, counts what arrived, and stops rather than
+  re-sending work the bridge may still be doing;
+- `render-progress.json` in the output directory records
+  `cavalry-mcp/render-progress@1` — status, budget, completed and pending frames —
+  and `resume` (default on) reuses non-empty frames, so a long render is
+  continued by calling the same tool again.
+
+```json
+{ "frames": "0-215", "outDir": "C:/renders/hero", "timeoutMs": 45000, "perFrameMs": 300 }
+```
+
+Measured against Cavalry 2.8.0 / a 736×414 comp: 216 frames in 6 chunks in 40 s
+(~175 ms per frame), playhead returned to frame 211.
+
+### Live API probe (`cavalry_probe_api`)
+
+The documentation and the build disagree about names — `api.getName` does not
+exist while `api.getNiceName` does, `text.fontSize` returns the text object
+while `fontSize` returns the number. One call settles it: `Object.keys(api)`
+filtered to functions, a yes/no per watched name, one representative layer per
+layer type with its full attribute list, and `api.getAllLayerTypes()`. The
+payload stays a summary; the full report is written to
+`~/.cavalry-mcp/cavalry-api-capabilities.json` (or `--capabilities-out`).
+
+```bash
+node bin/stallion-cli.mjs --probe                       # summary + report file
+node bin/stallion-cli.mjs --probe --layer textShape#12  # plus a specific layer
+```
+
+For the 2.8.0 build above: 320 api functions, 256 layer types, 82 attributes on
+a `textShape`, and 7 watch-list names absent (`getName`, `getCompositionList`,
+`duplicateSelection`, `startUndoGroup`, `endUndoGroup`, `save`, `open`).
+
 ## Zero-MCP CLI
 
 ```bash
@@ -32,13 +84,16 @@ node bin/stallion-cli.mjs -e 'return _mg.text("FAST", 96);'
 node bin/stallion-cli.mjs -f ./rig.js
 node bin/stallion-cli.mjs -p kinetic_text '{"text":"HELLO"}'
 node bin/stallion-cli.mjs --sel
+node bin/stallion-cli.mjs --verify-frames 0,60,120 --scale 50
+node bin/stallion-cli.mjs --render-frames 0-215 --out ./frames --chunk 20
+node bin/stallion-cli.mjs --probe --capabilities-out ./capabilities.json
 ```
 
 Install the package to expose the `stallion` command. Run `npm run build` after changing source because the CLI imports `dist/`.
 
 ## Editing and review pipeline
 
-The CLI flags and `_mg` methods below are additive; the three-tool MCP surface is unchanged.
+The CLI flags and `_mg` methods below are additive on top of the core tools.
 
 | Capability | How to call it |
 |---|---|
@@ -53,6 +108,8 @@ The CLI flags and `_mg` methods below are additive; the three-tool MCP surface i
 | Dynamic connectors | `_mg.connectDynamic(sourceId, targetId, { color, width, curve })` |
 | Global theme binding | `_mg.applyTheme({ colors, typography, radius })`, `_mg.applyTheme(null)` to clear |
 | Frame previews + collisions | `stallion --verify-frames 0,30,60` or `0-60:10` |
+| Numbered PNG sequence | `stallion --render-frames 0-215 [--out dir] [--chunk N] [--per-frame-ms N] [--timeout-ms N] [--grace-ms N] [--no-resume]` |
+| Live API capabilities | `stallion --probe [--layer id] [--function name] [--capabilities-out file]` |
 
 Every execution still runs in one Undo group. After the group closes, the wrapper writes `~/.cavalry-mcp/last-execution-state.json` (status, error stack, created layers, selection, comp info and world-space bounding boxes); MCP returns the same snapshot as `_meta.telemetry`. `--verify-frames` renders PNGs into `~/.cavalry-mcp/previews` and warns when non-background layers overlap at the sampled frames — it restores the original playhead and active comp afterwards.
 
@@ -87,7 +144,7 @@ node bin/stallion-cli.mjs --list fintech_billing  # one category
 node bin/stallion-cli.mjs -p payment_card_checkout '{"amount":"$99.00","accentColor":"#22D3EE"}'
 ```
 
-From MCP, call `cavalry_run_preset` with `{ "preset": "payment_card_checkout", "params": { ... } }`. Presets are stored as category packs in `src/presets/packs/cat01…cat14`, composed from shared factories in `src/presets/rig_builders.ts`, and can also be driven programmatically via `compilePreset(id, params)` / `listPresets(category?)` from `src/presets/cavalry_snippets.ts` (the lightweight listing keeps the three-tool MCP schema small).
+From MCP, call `cavalry_run_preset` with `{ "preset": "payment_card_checkout", "params": { ... } }`. Presets are stored as category packs in `src/presets/packs/cat01…cat14`, composed from shared factories in `src/presets/rig_builders.ts`, and can also be driven programmatically via `compilePreset(id, params)` / `listPresets(category?)` from `src/presets/cavalry_snippets.ts` (the lightweight listing keeps the MCP schema small).
 
 Every preset runs with default `{}` parameters. Parameters declare types `string`, `int`, `double`, `bool`, `color` (hex string) and `json` (object/array). Accepted aliases: `bento_grid` and `spring_card` → `bento_cards`, `counter_rig` → `number_counter`, `bg_grid` → `dot_matrix_bg`.
 
@@ -148,12 +205,14 @@ Tools appear as `mcp__cavalry__<tool_name>`.
 | `STALLION_URL` | `http://127.0.0.1:8080` | Stallion base URL |
 | `STALLION_TOKEN` | empty | Optional bearer token matching `stallion.json` |
 | `CAVALRY_HOST` / `CAVALRY_PORT` | `127.0.0.1` / `8080` | Legacy URL configuration |
-| `CAVALRY_HTTP_TIMEOUT_MS` | `5000` | Abort timeout for every HTTP request |
-| `CAVALRY_RESULT_TIMEOUT_MS` | `5000` | Overall structured-result wait; increase for slow renders |
+| `CAVALRY_HTTP_TIMEOUT_MS` | `5000` | Abort timeout for every HTTP request; long callers (`cavalry_render_frames`, `--render-frames`) override it per call |
+| `CAVALRY_RESULT_TIMEOUT_MS` | `5000` | Overall structured-result wait; per-call `timeoutMs` overrides it for one script or chunk |
 | `CAVALRY_TIMEOUT_MS` | *(legacy)* | Sets both timeouts at once |
 | `CAVALRY_RESULT_PATH` | `<tmpdir>/cavalry-mcp-result-<pid>.json` | Legacy fallback result file |
 | `CAVALRY_STATE_PATH` | `~/.cavalry-mcp/last-execution-state.json` | Telemetry snapshot written after every Undo group |
 | `CAVALRY_PREVIEW_DIR` | `~/.cavalry-mcp/previews` | Output directory for `--verify-frames` PNGs |
+| `CAVALRY_FRAMES_DIR` | `~/.cavalry-mcp/previews/frames` | Output directory for `cavalry_render_frames` / `--render-frames` |
+| `CAVALRY_CAPABILITIES_PATH` | `~/.cavalry-mcp/cavalry-api-capabilities.json` | Report written by `cavalry_probe_api` / `--probe` |
 | `FFMPEG_PATH` | `ffmpeg` | ffmpeg binary used for beat decoding |
 | `ENABLE_LEGACY_TOOLS` | `false` | Restore the original granular MCP tools |
 
@@ -164,7 +223,6 @@ Tools appear as `mcp__cavalry__<tool_name>`.
 | Tool | Notes |
 |---|---|
 | `cavalry_ping` | Reachability check + Cavalry version |
-| `cavalry_batch` | **Many ops in one round trip** — see below |
 | `cavalry_run_script` | Arbitrary JS; assign `__result` to return data |
 | `cavalry_create_layer` | Returns the new layer ID (e.g. `textShape#3`) |
 | `cavalry_set_attribute` | `{"material.materialColor": "#101828"}`, `{"generator.dimensions": [1920, 1080]}` |
@@ -188,7 +246,7 @@ Tools appear as `mcp__cavalry__<tool_name>`.
 |---|---|
 | `cavalry_keyframe` | Single keyframe **or a whole curve** (`keyframes: [{frame, attributes}]`) in one call |
 | `cavalry_keyframe_edit` | Edit EXISTING animation: delete keyframes at frames, wipe an attribute's (or the whole layer's) animation, set/clear per-keyframe velocity |
-| `cavalry_magic_easing` | Schema-validated enum of the 20 real easing names |
+| `cavalry_magic_easing` | Schema-validated enum of the 20 real easing names; `expression` carries a custom curve (accepted with `Custom`/`None` only) |
 | `cavalry_get_keyframes` | Keyframe frames per attribute |
 | `cavalry_animate_in` | Presets in one call: `fadeIn`, `fadeUp`, `springUp`, `slideInLeft`, `popIn`, `dropBounce` — keyframed relative to the layer's current position |
 | `cavalry_expression` | Set/read a per-attribute JavaScript expression (evaluated every frame) |
@@ -225,6 +283,9 @@ Tools appear as `mcp__cavalry__<tool_name>`.
 
 ### Batch example
 
+`cavalry_batch` is a core tool (the op catalogue is in its `operations` parameter
+description, which keeps the tool description itself short).
+
 ```json
 [
   { "op": "create", "layerType": "basicShape", "name": "BG", "as": "bg" },
@@ -237,6 +298,7 @@ Tools appear as `mcp__cavalry__<tool_name>`.
       { "frame": 30, "attributes": { "position.y": 0,    "opacity": 100 } }
     ] },
   { "op": "easing", "layerId": "$title", "attrPath": "position.y", "frame": 0, "easingType": "SpringOut" },
+  { "op": "easing", "layerId": "$title", "attrPath": "opacity", "frame": 0, "easingType": "Custom", "expression": "1 - (1-t)*(1-t)*0.4" },
   { "op": "order", "layerId": "$title", "to": "front" },
   { "op": "gradient", "layerId": "$bg", "attrPath": "generator.gradient", "colors": ["#101828", "#2d3a8c"] },
   { "op": "expression", "layerId": "$title", "attrPath": "position.x", "expression": "value * 2" },

@@ -3,4 +3,7 @@ Always use _mg.* helpers and procedural duplicator, subMesh, stagger, noise, osc
 Return compact values. Use cavalry_inspect for IDs and never dump the full scene graph.
 When tweaking existing layers, use const id = _mg.sel() (api.getSelection()[0]).
 Prefer built-in presets and one atomic execution. Do not nest Undo groups. The library has 120 presets in 14 packs under src/presets/packs; list them with node bin/stallion-cli.mjs --list [category].
+Build scenes with cavalry_batch; render sequences with cavalry_render_frames in deadline-sized chunks, never one call per frame.
+After a chunk times out do not re-send it (the bridge is still rendering). Read pending frames from render-progress.json and rerun to resume.
+Run cavalry_probe_api before trusting an API or attribute name: api.getName is absent, api.getNiceName is present; text uses fontSize/letterSpacing/wordSpacing/font, not text.*.
 Never substitute After Effects APIs; follow types/cavalry.d.ts.
