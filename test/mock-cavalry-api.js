@@ -315,14 +315,17 @@ export function buildMockApi(state, hooks = {}) {
         if (spec.newValue !== undefined) kf.attributes[attr] = spec.newValue;
       }
     },
-    magicEasing(id, attrPath, frame, name) {
+    magicEasing(id, attrPath, frame, name, expression) {
       layerOf(state, id);
-      state.easings.push({ layerId: id, attrPath, frame, name });
+      // Cavalry only reads `expression` for "Custom" (and tolerates it with
+      // "None"), so the mock records whatever arrived and lets the assertions
+      // decide whether the compiler passed it through.
+      state.easings.push({ layerId: id, attrPath, frame, name, expression: expression ?? null });
       return true;
     },
     getMagicEasing(id, attrPath, frame) {
       const found = state.easings.find((e) => e.layerId === id && e.attrPath === attrPath && e.frame === frame);
-      return found ? { easingName: found.name, expression: "" } : null;
+      return found ? { easingName: found.name, expression: found.expression ?? "" } : null;
     },
     deleteKeyframe(id, attr, frame) {
       layerOf(state, id);
@@ -532,6 +535,9 @@ export function buildMockApi(state, hooks = {}) {
       state.layers.delete(id);
       state.parents.delete(id);
       state.selection = state.selection.filter((s) => s !== id);
+    },
+    layerExists(id) {
+      return state.layers.has(id);
     },
     rename(id, name) {
       layerOf(state, id).name = name;

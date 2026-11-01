@@ -4,10 +4,15 @@ import type { ExecutionState } from "../state.js";
 
 export type ScriptOutcome = Outcome & { state?: ExecutionState | null };
 
+/**
+ * `timeoutMs` bounds how long the result is awaited; `httpTimeoutMs` bounds the
+ * POST itself. A multi-frame render chunk can legitimately outlive the default
+ * poll budget, so long callers raise both together instead of relying on env.
+ */
 export async function executeMotionScript(
   code: string,
   config?: StallionConfig,
-  opts?: { timeoutMs?: number; helpers?: boolean; statePath?: string },
+  opts?: { timeoutMs?: number; httpTimeoutMs?: number; helpers?: boolean; statePath?: string },
 ): Promise<ScriptOutcome> {
   try {
     const execution = await runScriptWithExecution(code, config, { helpers: true, ...opts });

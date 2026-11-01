@@ -18,6 +18,7 @@ export interface MockEasing {
   attrPath: string;
   frame: number;
   name: string;
+  expression?: string | null;
 }
 
 export interface MockComp {
@@ -66,6 +67,7 @@ export interface MockApi {
   getComps(): string[];
   getActiveComp(): string;
   setActiveComp(id: string): void;
+  layerExists(id: string): boolean;
   getBoundingBox(id: string, worldSpace?: boolean): {
     x: number; y: number; width: number; height: number;
     centre: { x: number; y: number };

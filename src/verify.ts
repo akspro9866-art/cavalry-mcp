@@ -13,8 +13,8 @@ import { executeMotionScript, type ScriptOutcome } from "./runtime/execute.js";
 import type { StallionConfig } from "./stallion.js";
 
 export interface VerifyFramesInput {
-  /** `"0,10,20"`, `"0-20:5"` ranges, or an explicit number array. */
-  frames: string | number[];
+  /** `"0,10,20"`, `"0-20:5"` ranges, or an explicit array of frame numbers. */
+  frames: string | Array<string | number>;
   /** Defaults to `$CAVALRY_PREVIEW_DIR` or `~/.cavalry-mcp/previews`. */
   outDir?: string;
   /** Comp to activate for the render (restored afterwards). */
@@ -108,14 +108,20 @@ function clampInt(value: unknown, fallback: number, min: number, max: number): n
   return Math.min(max, Math.max(min, Math.round(n)));
 }
 
-function tooManyFrames(maxFrames: number): Error {
-  return new Error(`Too many frames; limit is ${maxFrames} per --verify-frames call. Use a step or split the request.`);
+function tooManyFrames(maxFrames: number, label: string): Error {
+  return new Error(`Too many frames; limit is ${maxFrames} per ${label} call. Use a step or split the request.`);
 }
 
-function parseFrameList(input: string | number[], maxFrames: number): number[] {
+/** Shared with the sequence renderer: `"0,10-20:5"` and explicit arrays both work. */
+export function parseFrameList(
+  input: string | Array<string | number>,
+  maxFrames: number,
+  label = "--verify-frames",
+): number[] {
   if (!Array.isArray(input) && typeof input !== "string") {
     throw new Error("Frames must be a comma list or a number array");
   }
+  const emptyMessage = `${label} needs at least one frame, e.g. 0,30,60`;
   const values: number[] = [];
   if (Array.isArray(input)) {
     for (const entry of input) {
@@ -125,7 +131,7 @@ function parseFrameList(input: string | number[], maxFrames: number): number[] {
     }
   } else {
     const tokens = input.split(",").map((token) => token.trim()).filter(Boolean);
-    if (!tokens.length) throw new Error("--verify-frames needs at least one frame, e.g. 0,30,60");
+    if (!tokens.length) throw new Error(emptyMessage);
     for (const token of tokens) {
       const range = token.match(/^(-?\d+)\s*(?:-|\.\.)\s*(-?\d+)(?::(\d+))?$/);
       if (range) {
@@ -139,7 +145,7 @@ function parseFrameList(input: string | number[], maxFrames: number): number[] {
         }
         const step = Math.max(1, Math.round(Number(range[3] ?? 1)));
         const count = Math.floor((end - start) / step) + 1;
-        if (values.length + count > maxFrames) throw tooManyFrames(maxFrames);
+        if (values.length + count > maxFrames) throw tooManyFrames(maxFrames, label);
         for (let frame = start; frame <= end; frame += step) values.push(frame);
         continue;
       }
@@ -147,7 +153,7 @@ function parseFrameList(input: string | number[], maxFrames: number): number[] {
       values.push(Number(token));
     }
   }
-  if (!values.length) throw new Error("--verify-frames needs at least one frame, e.g. 0,30,60");
+  if (!values.length) throw new Error(emptyMessage);
 
   const unique: number[] = [];
   const seen = new Set<number>();
@@ -156,7 +162,7 @@ function parseFrameList(input: string | number[], maxFrames: number): number[] {
     seen.add(frame);
     unique.push(frame);
   }
-  if (unique.length > maxFrames) throw tooManyFrames(maxFrames);
+  if (unique.length > maxFrames) throw tooManyFrames(maxFrames, label);
   return unique;
 }
 

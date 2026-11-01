@@ -93,3 +93,57 @@ test("CLI --verify-frames renders previews and warns about collisions", async ()
   assert.match(stderr, /\[verify\] WARNING frame 0: "Panel"/);
   assert.match(stderr, /\[verify\] 2 preview\(s\)/);
 });
+
+test("CLI --render-frames chunks the sequence and reports the budget it used", async () => {
+  const framesDir = path.join(workdir, "cli-frames");
+  const cliEnv = { ...env, CAVALRY_FRAMES_DIR: framesDir };
+  const { stdout, stderr } = await exec(
+    process.execPath,
+    [cli, "--render-frames", "0-3", "--chunk", "2", "--per-frame-ms", "120", "--timeout-ms", "6000", "--scale", "60"],
+    { env: cliEnv },
+  );
+  const payload = JSON.parse(stdout);
+  assert.equal(payload.status, "complete");
+  assert.equal(payload.outDir, framesDir);
+  assert.equal(payload.scale, 60);
+  assert.deepEqual(payload.rendered, [0, 1, 2, 3]);
+  assert.deepEqual(payload.pending, []);
+  assert.equal(payload.chunks.length, 2, "--chunk 2 over four frames");
+  assert.ok(payload.budget === undefined || payload.budget.httpTimeoutMs > 6000);
+  assert.match(stderr, /\[render\] chunk 0: rendered \(2\/2\)/);
+  assert.match(stderr, /\[render\] complete \| 4 rendered/);
+  for (const frame of [0, 1, 2, 3]) {
+    assert.ok(fs.existsSync(path.join(framesDir, `frame-${String(frame).padStart(6, "0")}.png`)));
+  }
+  assert.ok(fs.existsSync(path.join(framesDir, "render-progress.json")));
+
+  // Second call resumes: nothing is sent back to the bridge.
+  const resumed = await exec(
+    process.execPath,
+    [cli, "--render-frames", "0-3", "--chunk", "2"],
+    { env: cliEnv },
+  );
+  const resumePayload = JSON.parse(resumed.stdout);
+  assert.equal(resumePayload.status, "complete");
+  assert.deepEqual(resumePayload.rendered, []);
+  assert.equal(resumePayload.reused.length, 4);
+  assert.match(resumed.stderr, /\[render\] complete \| 0 rendered \| 4 reused/);
+});
+
+test("CLI --probe answers capability questions and writes the report file", async () => {
+  const reportFile = path.join(workdir, "capabilities.json");
+  const { stdout, stderr } = await exec(
+    process.execPath,
+    [cli, "--probe", "--capabilities-out", reportFile, "--function", "getNiceName", "--function", "getName", "--no-types"],
+    { env },
+  );
+  const payload = JSON.parse(stdout);
+  assert.equal(payload.capabilities.getNiceName, true);
+  assert.equal(payload.capabilities.getName, false, "the name accessor the docs promise does not exist");
+  assert.equal(payload.file, reportFile);
+  assert.equal(payload.surface, null, "--inline-surface was not passed");
+  assert.ok(fs.existsSync(reportFile));
+  const report = JSON.parse(fs.readFileSync(reportFile, "utf8")) as { surface: string[] };
+  assert.ok(report.surface.includes("renderPNGFrame"));
+  assert.match(stderr, /\[probe\] 1 present \/ 1 missing/);
+});

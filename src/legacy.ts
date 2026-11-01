@@ -65,7 +65,6 @@ import {
   sceneLayersScript,
   type Outcome,
 } from "./lib.js";
-import { compileBatch, type BatchOp } from "./batch.js";
 import { compileAnimateIn, ANIMATE_PRESETS } from "./presets.js";
 import { decodePng, encodePng, compositeGrid, sampleFrames } from "./filmstrip.js";
 
@@ -147,45 +146,6 @@ server.tool(
         },
       ],
     };
-  },
-);
-
-// ---------------------------------------------------------------------------
-// Tool: batch — many operations in ONE round trip
-// ---------------------------------------------------------------------------
-server.tool(
-  "cavalry_batch",
-  `Execute a list of operations in a single round trip — building a scene this way costs one bridge call instead of one per step (each bridge call has ~1s latency). Each op runs in its own try/catch, so one failure doesn't kill the batch; per-op ok/error comes back. Give a create/duplicate op "as": "name" and reference it later as "$name" in any layerId field.
-Ops: create {layerType, name?, as?} | duplicate {layerId, as?, withInputConnections?} | set {layerId, attributes} | keyframe {layerId, keyframes:[{frame, attributes}]} | easing {layerId, attrPath, frame, easingType} | connect {sourceLayerId, sourceAttr, targetLayerId, targetAttr, force?} | setGenerator {layerId, generatorType, attrPath?} | addDynamic {layerId, attrName, attrType} | rename {layerId, name} | order {layerId, to: forward|front|backward|back} | expression {layerId, attrPath, expression} | gradient {layerId, attrPath, colors:[hex,…]} | select {layerIds} | delete {layerIds} | timing {layerId, inFrame?, outFrame?, offset?} | setParent {layerId, parentLayerId?} | reorder {layerId, underLayerId}.
-Example: [{"op":"create","layerType":"basicShape","name":"BG","as":"bg"},{"op":"set","layerId":"$bg","attributes":{"material.materialColor":"#101828"}},{"op":"keyframe","layerId":"$bg","keyframes":[{"frame":0,"attributes":{"position.x":0}},{"frame":30,"attributes":{"position.x":200}}]}]`,
-  { operations: z.array(z.record(z.string(), z.unknown())).describe("Ordered list of operations") },
-  async ({ operations }) => {
-    let code: string;
-    try {
-      code = compileBatch(operations as BatchOp[]);
-    } catch (e) {
-      return textResult(`Invalid batch: ${e instanceof Error ? e.message : String(e)}`, true);
-    }
-    const { outcome } = await exec(code);
-    if (!outcome.ok) return textResult(`Batch failed: ${outcome.text}`, true);
-    let summary = outcome.text;
-    try {
-      const parsed = JSON.parse(outcome.text) as {
-        refs: Record<string, string>;
-        results: Array<{ index: number; op: string; ok: boolean; error?: string }>;
-      };
-      const failed = parsed.results.filter((r) => !r.ok);
-      const refLines = Object.entries(parsed.refs).map(([k, v]) => `${k}=${v}`);
-      summary =
-        `Batch ok: ${parsed.results.length - failed.length}/${parsed.results.length} ops succeeded` +
-        (refLines.length ? `\nrefs: ${refLines.join(", ")}` : "") +
-        (failed.length
-          ? `\nfailed:\n${failed.map((r) => `  [${r.index}] ${r.op}: ${r.error}`).join("\n")}`
-          : "");
-    } catch {
-      /* keep raw text */
-    }
-    return textResult(summary);
   },
 );
 
@@ -304,12 +264,24 @@ server.tool(
     attrPath: z.string().describe("The attribute path"),
     frame: z.number().describe("The frame of the keyframe to ease"),
     easingType: z.enum(EASING_NAMES).describe("Easing type"),
+    expression: z
+      .string()
+      .optional()
+      .describe('Custom easing curve; only valid with easingType "Custom" (or "None" to disable easing).'),
   },
-  async ({ layerId, attrPath, frame, easingType }) =>
-    runCode(
-      "Easing applied: ",
-      `api.magicEasing(${jsString(layerId)}, ${jsString(attrPath)}, ${frame}, ${jsString(easingType)});`,
-    ),
+  async ({ layerId, attrPath, frame, easingType, expression }) => {
+    if (expression !== undefined && easingType !== "Custom" && easingType !== "None") {
+      return textResult(
+        `Invalid easing: expression is only valid with easingType "Custom" or "None", not "${easingType}".`,
+        true,
+      );
+    }
+    const args = `${jsString(layerId)}, ${jsString(attrPath)}, ${frame}, ${jsString(easingType)}`;
+    const call = expression === undefined
+      ? `api.magicEasing(${args});`
+      : `api.magicEasing(${args}, ${jsString(expression)});`;
+    return runCode("Easing applied: ", call);
+  },
 );
 
 // ---------------------------------------------------------------------------

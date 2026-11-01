@@ -26,7 +26,7 @@ export type BatchOp =
       attributes?: Record<string, unknown>;
       keyframes?: BatchKeyframe[];
     }
-  | { op: "easing"; layerId: string; attrPath: string; frame: number; easingType: string }
+  | { op: "easing"; layerId: string; attrPath: string; frame: number; easingType: string; expression?: string }
   | {
       op: "connect";
       sourceLayerId: string;
@@ -183,8 +183,22 @@ export function compileBatch(ops: BatchOp[]): string {
         if (!isStr(op.attrPath)) bad(i, "attrPath must be a non-empty string");
         if (typeof op.frame !== "number") bad(i, "frame must be a number");
         if (!isStr(op.easingType)) bad(i, "easingType must be a non-empty string");
+        // Cavalry only reads an expression for Custom (and accepts one with None,
+        // which disables easing). Anywhere else it would be silently ignored, so
+        // the batch refuses it instead of shipping a no-op.
+        if (op.expression !== undefined) {
+          if (typeof op.expression !== "string" || !op.expression.trim()) {
+            bad(i, "expression must be a non-empty string");
+          }
+          if (op.easingType !== "Custom" && op.easingType !== "None") {
+            bad(i, `expression is only valid with easingType Custom or None, not "${op.easingType}"`);
+          }
+        }
+        const easingArgs = op.expression === undefined
+          ? `${jsString(op.attrPath)}, ${op.frame}, ${jsString(op.easingType)}`
+          : `${jsString(op.attrPath)}, ${op.frame}, ${jsString(op.easingType)}, ${jsString(op.expression)}`;
         body.push(
-          `__rec(${i}, "easing", function () { return api.magicEasing(${refExpr(op.layerId, i, declared)}, ${jsString(op.attrPath)}, ${op.frame}, ${jsString(op.easingType)}); });`,
+          `__rec(${i}, "easing", function () { return api.magicEasing(${refExpr(op.layerId, i, declared)}, ${easingArgs}); });`,
         );
         break;
       }

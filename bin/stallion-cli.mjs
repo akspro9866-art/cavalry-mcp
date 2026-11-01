@@ -7,11 +7,16 @@ import { formatExecutionState } from "../dist/state.js";
 import { loadBeatSource, formatBeatSummary } from "../dist/beats.js";
 import { runPromo } from "../dist/promo.js";
 import { runVerifyFrames } from "../dist/verify.js";
+import { runRenderFrames, formatRenderSummary } from "../dist/render-frames.js";
+import { runProbe } from "../dist/probe.js";
 
 const usage = `stallion -e "<javascript>" | -f <script.js> | -p <preset> '<json>' | --list [category] | --sel
          --audio-beats <audio|beats.json> [--fps N] [--beats-out <file>] [--ffmpeg <path>]
          --render-promo <plan.json> [--out <mp4>] [--audio <track>] [--workdir <dir>] [--dry-run]
-         --verify-frames <f1,f2,f3|f1-f3:step> [--out <dir>]
+         --verify-frames <f1,f2,f3|f1-f3:step> [--out <dir>] [--scale N] [--comp <id>]
+         --render-frames <f1-f2|f1,f2|f1-f2:step> [--out <dir>] [--pattern <p>] [--scale N] [--comp <id>]
+             [--chunk N] [--per-frame-ms N] [--timeout-ms N] [--grace-ms N] [--no-resume]
+         --probe [--layer <id>]... [--function <name>]... [--types] [--inline-surface] [--capabilities-out <file>]
          (global flags: --state, --fps N, --ffmpeg <path>)`;
 
 const args = process.argv.slice(2);
@@ -32,6 +37,19 @@ function takeBool(flag) {
   return true;
 }
 
+/** Repeatable flag: `--layer a --layer b`. */
+function takeValues(flag) {
+  const values = [];
+  for (;;) {
+    const index = args.indexOf(flag);
+    if (index < 0) return values;
+    const value = args[index + 1];
+    if (value == null || value.startsWith("--")) throw new Error(`${flag} requires a value`);
+    args.splice(index, 2);
+    values.push(value);
+  }
+}
+
 const stateFlag = takeBool("--state");
 const fpsFlag = takeValue("--fps");
 const beatsOut = takeValue("--beats-out");
@@ -43,6 +61,29 @@ const dryRun = takeBool("--dry-run");
 const audioBeats = takeValue("--audio-beats");
 const renderPromo = takeValue("--render-promo");
 const verifyFrames = takeValue("--verify-frames");
+const renderFrames = takeValue("--render-frames");
+const probeApi = takeBool("--probe");
+const patternFlag = takeValue("--pattern");
+const scaleFlag = takeValue("--scale");
+const compFlag = takeValue("--comp");
+const chunkFlag = takeValue("--chunk");
+const perFrameFlag = takeValue("--per-frame-ms");
+const timeoutFlag = takeValue("--timeout-ms");
+const graceFlag = takeValue("--grace-ms");
+const noResume = takeBool("--no-resume");
+const capabilitiesOut = takeValue("--capabilities-out");
+const inlineSurface = takeBool("--inline-surface");
+const noTypes = takeBool("--no-types");
+const layerFlag = takeValues("--layer");
+const functionFlag = takeValues("--function");
+
+/** Undefined keeps the module default; the CLI never hard-codes a budget. */
+function num(value) {
+  if (value == null) return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) throw new Error(`Expected a number, got "${value}"`);
+  return parsed;
+}
 
 let code;
 let helpers = true;
@@ -98,6 +139,8 @@ try {
     const result = await runVerifyFrames({
       frames: verifyFrames,
       outDir: outFlag || undefined,
+      scale: num(scaleFlag),
+      comp: compFlag || undefined,
     });
     console.log(JSON.stringify(result, null, 2));
     for (const warning of result.warnings) console.error(`[verify] WARNING ${warning}`);
@@ -107,6 +150,40 @@ try {
         ` | frame restored to ${result.restoredFrame}`,
     );
     if (result.missing.length) process.exitCode = 1;
+  } else if (renderFrames) {
+    const result = await runRenderFrames(
+      {
+        frames: renderFrames,
+        outDir: outFlag || undefined,
+        pattern: patternFlag || undefined,
+        scale: num(scaleFlag),
+        comp: compFlag || undefined,
+        chunkFrames: num(chunkFlag),
+        perFrameMs: num(perFrameFlag),
+        timeoutMs: num(timeoutFlag),
+        graceMs: num(graceFlag),
+        resume: noResume ? false : undefined,
+      },
+      { onChunk: chunk => console.error(`[render] chunk ${chunk.index}: ${chunk.status} (${chunk.rendered.length}/${chunk.frames.length})`) },
+    );
+    console.log(JSON.stringify(result, null, 2));
+    for (const note of result.limitations) console.error(`[render] NOTE ${note}`);
+    console.error(`[render] ${formatRenderSummary(result)}`);
+    if (result.status !== "complete") process.exitCode = 1;
+  } else if (probeApi) {
+    const result = await runProbe({
+      layerIds: layerFlag.length ? layerFlag : undefined,
+      functions: functionFlag.length ? functionFlag : undefined,
+      sampleTypes: noTypes ? false : undefined,
+      inlineSurface,
+      writeFile: capabilitiesOut || undefined,
+    });
+    console.log(JSON.stringify(result, null, 2));
+    console.error(
+      `[probe] ${result.present.length} present / ${result.missing.length} missing` +
+        ` | ${result.apiFunctionCount} api function(s) | ${result.attributeSamples.length} sample(s) -> ${result.file}`,
+    );
+    for (const warning of result.warnings) console.error(`[probe] WARNING ${warning}`);
   } else {
     if (args[0] === "-e" && args[1]) {
       code = args[1];

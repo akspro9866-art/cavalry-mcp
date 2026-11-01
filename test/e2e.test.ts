@@ -94,6 +94,9 @@ test("all tools are registered and listed", async () => {
     "cavalry_transform",
     "cavalry_layer_types",
     "cavalry_playback",
+    "cavalry_probe_api",
+    "cavalry_render_frames",
+    "cavalry_verify_frames",
   ]) {
     assert.ok(names.includes(expected), `missing tool ${expected}`);
   }
@@ -128,9 +131,12 @@ test("batch builds a scene in one round trip and reports refs", async () => {
     ],
   });
   assert.equal(res.isError, undefined);
-  const text = textOf(res);
-  assert.match(text, /4\/4 ops succeeded/);
-  assert.match(text, /bg=basicShape#\d+/);
+  const summary = JSON.parse(textOf(res));
+  assert.equal(summary.ok, true);
+  assert.equal(summary.executed, 4);
+  assert.equal(summary.failed, 0);
+  assert.match(summary.refs.bg, /basicShape#\d+/);
+  assert.match(summary.refs.bg2, /basicShape#\d+/);
   assert.equal(mock.state.layers.get("basicShape#1")?.attrs["material.materialColor"], "#101828");
 });
 
@@ -413,4 +419,72 @@ test("get_scene_layers includes the selected flag", async () => {
   const rows = JSON.parse(textOf(res));
   assert.ok(typeof rows[0]?.selected === "boolean");
   if (first) assert.equal(rows.find((r: { id: string }) => r.id === first)?.selected, true);
+});
+
+test("render_frames drives a real sequence through the result-file protocol", async () => {
+  await call("cavalry_set_current_frame", { frame: 11 });
+  const outDir = path.join(workdir, "seq");
+  const res = await call("cavalry_render_frames", { frames: "0-3", outDir, chunkFrames: 2, perFrameMs: 200, timeoutMs: 5000 });
+  assert.equal(res.isError, undefined, textOf(res));
+  const payload = JSON.parse(textOf(res));
+  assert.equal(payload.status, "complete");
+  assert.deepEqual(payload.rendered.items, [0, 1, 2, 3]);
+  assert.equal(payload.chunks.length, 2);
+  assert.equal(payload.restoredFrame, 11);
+  for (const frame of [0, 1, 2, 3]) {
+    const file = path.join(outDir, `frame-${String(frame).padStart(6, "0")}.png`);
+    assert.ok(fs.existsSync(file) && fs.statSync(file).size > 0, file);
+  }
+  const frame = await call("cavalry_get_current_frame", {});
+  assert.match(textOf(frame), /11/, "the playhead is handed back to the caller");
+
+  // A resumed call sends nothing new and stays under the token budget.
+  const again = await call("cavalry_render_frames", { frames: "0-3", outDir, chunkFrames: 2 });
+  const resume = JSON.parse(textOf(again));
+  assert.equal(resume.status, "complete");
+  assert.deepEqual(resume.rendered.items, []);
+  assert.equal(resume.reused.items.length, 4);
+});
+
+test("verify_frames checks the scene before a long render", async () => {
+  const built = await call("cavalry_batch", {
+    operations: [
+      { op: "create", layerType: "basicShape", name: "V1", as: "a" },
+      { op: "set", layerId: "$a", attributes: { "generator.dimensions": [300, 200], "position.x": 0, "position.y": 0 } },
+      { op: "create", layerType: "basicShape", name: "V2", as: "b" },
+      { op: "set", layerId: "$b", attributes: { "generator.dimensions": [200, 100], "position.x": 100, "position.y": 50 } },
+    ],
+  });
+  assert.equal(built.isError, undefined, textOf(built));
+  const res = await call("cavalry_verify_frames", { frames: "0,10", outDir: path.join(workdir, "verify") });
+  assert.equal(res.isError, undefined, textOf(res));
+  const payload = JSON.parse(textOf(res));
+  assert.equal(payload.frames.length, 2);
+  assert.ok(payload.collisions.length > 0, "the overlapping pair is flagged");
+  assert.equal(payload.missing.length, 0);
+});
+
+test("magic_easing only takes a curve expression where Cavalry reads one", async () => {
+  const id = [...mock.state.layers.keys()][0];
+  await call("cavalry_keyframe", { layerId: id, attrPath: "position.x", frame: 0, value: 10 });
+  const custom = await call("cavalry_magic_easing", {
+    layerId: id, attrPath: "position.x", frame: 0, easingType: "Custom", expression: "t*t",
+  });
+  assert.equal(custom.isError, undefined, textOf(custom));
+  assert.equal(mock.state.easings.at(-1)?.expression, "t*t");
+  const rejected = await call("cavalry_magic_easing", {
+    layerId: id, attrPath: "position.x", frame: 0, easingType: "SlowOut", expression: "t*t",
+  });
+  assert.equal(rejected.isError, true);
+  assert.match(textOf(rejected), /only valid with easingType "Custom" or "None"/);
+});
+
+test("probe_api answers the naming questions the docs got wrong", async () => {
+  const reportFile = path.join(workdir, "live-capabilities.json");
+  const res = await call("cavalry_probe_api", { writeFile: reportFile });
+  assert.equal(res.isError, undefined, textOf(res));
+  const payload = JSON.parse(textOf(res));
+  assert.equal(payload.capabilities.getNiceName, true);
+  assert.equal(payload.capabilities.getName, false);
+  assert.ok(fs.existsSync(reportFile));
 });

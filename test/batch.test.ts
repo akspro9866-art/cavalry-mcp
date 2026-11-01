@@ -47,6 +47,47 @@ test("compileBatch: full scene build with refs, executed against a mock api", ()
   assert.ok(state.order.includes(`parent:${r.refs.bg2}->${bg}`));
 });
 
+test("compileBatch: easing Custom carries the curve expression to magicEasing", () => {
+  const ops: BatchOp[] = [
+    { op: "create", layerType: "null", name: "Curve", as: "c" },
+    {
+      op: "keyframe",
+      layerId: "$c",
+      keyframes: [
+        { frame: 0, attributes: { "position.x": 0 } },
+        { frame: 24, attributes: { "position.x": 300 } },
+      ],
+    },
+    { op: "easing", layerId: "$c", attrPath: "position.x", frame: 0, easingType: "Custom", expression: "1 - (1-t)*(1-t)" },
+    { op: "easing", layerId: "$c", attrPath: "position.x", frame: 24, easingType: "None", expression: "t" },
+    { op: "easing", layerId: "$c", attrPath: "position.x", frame: 12, easingType: "SlowIn" },
+  ];
+  const { state, result } = runWithMockApi(compileBatch(ops));
+  const r = result as { results: Array<{ ok: boolean }> };
+  assert.ok(r.results.every((x) => x.ok), JSON.stringify(r.results));
+  assert.equal(state.easings[0].name, "Custom");
+  assert.equal(state.easings[0].expression, "1 - (1-t)*(1-t)", "curve survives codegen");
+  assert.equal(state.easings[1].expression, "t", "None accepts a curve too");
+  assert.equal(state.easings[2].expression, null, "no expression means the 4-arg call");
+
+  // A curve attached to a named preset would be silently ignored by Cavalry, so
+  // the compiler refuses it instead of shipping a no-op.
+  assert.throws(
+    () =>
+      compileBatch([
+        { op: "easing", layerId: "null#1", attrPath: "position.x", frame: 0, easingType: "SlowIn", expression: "t" },
+      ]),
+    /expression is only valid with easingType Custom or None, not "SlowIn"/,
+  );
+  assert.throws(
+    () =>
+      compileBatch([
+        { op: "easing", layerId: "null#1", attrPath: "position.x", frame: 0, easingType: "Custom", expression: "  " },
+      ]),
+    /expression must be a non-empty string/,
+  );
+});
+
 test("compileBatch: one failing op does not kill the rest", () => {
   const ops: BatchOp[] = [
     { op: "create", layerType: "basicShape", name: "A", as: "a" },

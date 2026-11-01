@@ -76,11 +76,16 @@ function headers(config: StallionConfig): Record<string, string> {
   };
 }
 
-async function fetchWithTimeout(url: string, config: StallionConfig, init: RequestInit = {}): Promise<Response> {
+async function fetchWithTimeout(
+  url: string,
+  config: StallionConfig,
+  init: RequestInit = {},
+  timeoutMs?: number,
+): Promise<Response> {
   return fetch(url, {
     ...init,
     headers: { ...headers(config), ...init.headers },
-    signal: AbortSignal.timeout(config.httpTimeoutMs),
+    signal: AbortSignal.timeout(timeoutMs ?? config.httpTimeoutMs),
   });
 }
 
@@ -102,22 +107,29 @@ async function post(
   config: StallionConfig,
   seq?: string,
   statePath?: string,
+  httpTimeoutMs?: number,
 ): Promise<string> {
   const url = `${config.url}/post`;
+  const budget = httpTimeoutMs ?? config.httpTimeoutMs;
   try {
-    const response = await fetchWithTimeout(url, config, {
-      method: "POST",
-      body: JSON.stringify({
-        type,
-        code,
-        ...(seq ? { seq } : {}),
-        ...(statePath ? { statePath } : {}),
-      } satisfies StallionPayload),
-    });
+    const response = await fetchWithTimeout(
+      url,
+      config,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          type,
+          code,
+          ...(seq ? { seq } : {}),
+          ...(statePath ? { statePath } : {}),
+        } satisfies StallionPayload),
+      },
+      budget,
+    );
     if (!response.ok) throw new Error(`Stallion returned ${response.status}: ${await response.text()}`);
     return response.text();
   } catch (err) {
-    throw connectionError(err, url, config.httpTimeoutMs);
+    throw connectionError(err, url, budget);
   }
 }
 
@@ -206,7 +218,7 @@ async function waitForNative(config: StallionConfig, seq: string, timeoutMs: num
 export async function runScriptWithExecution(
   code: string,
   config: StallionConfig = CONFIG,
-  opts?: { timeoutMs?: number; helpers?: boolean; statePath?: string },
+  opts?: { timeoutMs?: number; httpTimeoutMs?: number; helpers?: boolean; statePath?: string },
 ): Promise<ScriptExecution> {
   const seq = randomUUID();
   const statePath = opts?.statePath
@@ -222,10 +234,10 @@ export async function runScriptWithExecution(
   const raw = await enqueue(async () => {
     const native = await supportsNativeResults(config);
     if (native) {
-      await post(atomic, "script", config, seq, statePath);
+      await post(atomic, "script", config, seq, statePath, opts?.httpTimeoutMs);
       return waitForNative(config, seq, opts?.timeoutMs ?? config.resultTimeoutMs);
     }
-    await post(wrapLegacyResult(atomic, seq, config.resultPath), "script", config, seq, statePath);
+    await post(wrapLegacyResult(atomic, seq, config.resultPath), "script", config, seq, statePath, opts?.httpTimeoutMs);
     return waitForFile(config.resultPath, seq, opts?.timeoutMs ?? config.resultTimeoutMs);
   });
   const state = readExecutionState(statePath, seq) ?? stateFromEnvelope(raw, seq);
@@ -235,7 +247,7 @@ export async function runScriptWithExecution(
 export async function runScriptWithResult(
   code: string,
   config: StallionConfig = CONFIG,
-  opts?: { timeoutMs?: number; helpers?: boolean; statePath?: string },
+  opts?: { timeoutMs?: number; httpTimeoutMs?: number; helpers?: boolean; statePath?: string },
 ): Promise<string> {
   return (await runScriptWithExecution(code, config, opts)).raw;
 }
