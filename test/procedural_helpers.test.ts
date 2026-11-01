@@ -99,8 +99,10 @@ test("_mg.patch applies deltas and absolute values in place, at a frame when giv
   const keyed = state.keyframes.filter(entry => entry.layerId === box && "position.y" in entry.attributes);
   assert.deepEqual(keyed.map(entry => entry.frame), [12]);
   assert.equal(keyed[0].attributes["position.y"], 80);
-  // patchSelected delegates deltas to patch; the mock base attribute stays 20.
-  assert.equal(api.get(box, "position.y"), 15);
+  // patchSelected delegates deltas to patch; with the frame-12 keyframe the
+  // attribute evaluates to the keyframe hold at the playhead (frame 0 before
+  // the first key returns the first key's value, like Cavalry).
+  assert.equal(api.get(box, "position.y"), 80);
   assert.deepEqual((result.first as { changes: unknown[] }).changes.length, 1);
   assert.equal((result.second as { changes: { frame: number }[] }).changes[0].frame, 12);
 });

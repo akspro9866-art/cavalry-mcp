@@ -88,10 +88,9 @@ test("patchSelected falls back to the last preset's tracked roots", () => {
   assert.equal(cardFill.r, 0x11);
   assert.equal(cardFill.g, 0xaa);
   assert.equal(cardFill.b, 0x33);
-  const fills = state.layers
-    .values()
-    .map((layer) => layer.attrs["material.materialColor"])
-    .filter(Boolean) as Array<{ r: number; g: number; b: number }>;
+  const fills = Array.from(state.layers.values(), (layer) => layer.attrs["material.materialColor"]).filter(
+    Boolean,
+  ) as Array<{ r: number; g: number; b: number }>;
   assert.ok(fills.some((fill) => fill.r === 0x11 && fill.g === 0xaa && fill.b === 0x33), "fill rewritten in place");
 });
 

@@ -69,6 +69,10 @@ test("probe: reports what this build has, writes the full document to disk", asy
   api.keyframe(layer, 0, { "position.x": 0 });
   const reportFile = path.join(workdir, "capabilities.json");
 
+  // The mock models tangents these days; the probe must still report the gap
+  // honestly when a build lacks the function, so remove it for this report.
+  delete (api as Record<string, unknown>).modifyKeyframeTangent;
+
   const result = await runProbe(
     { layerIds: [layer, "null#404"], writeFile: reportFile },
     { execute: sandboxExecutor(api) },

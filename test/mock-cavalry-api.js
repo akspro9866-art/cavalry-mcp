@@ -32,6 +32,10 @@ export function createMockApiState() {
     layers: new Map(),
     keyframes: [],
     easings: [],
+    // Per-keyframe tangent/velocity state, keyed `${layerId}|${attr}|${frame}`.
+    // Mirrors the live setKeyframeVelocity / modifyKeyframeTangent contract.
+    tangents: {},
+    keyframeSelection: [],
     selection: [],
     order: [],
     expressions: new Map(),
@@ -104,6 +108,32 @@ function sizeOf(layer) {
   return { width: Math.abs(width * scale[0]), height: Math.abs(height * scale[1]) };
 }
 
+/** Linear interpolation of (id, attr) keyframes at the current playhead. */
+function evalKeyframes(state, id, attr) {
+  const kfs = state.keyframes
+    .filter((k) => k.layerId === id && attr in k.attributes)
+    .sort((a, b) => a.frame - b.frame);
+  if (!kfs.length) return { found: false, value: undefined };
+  const f = state.frame;
+  if (f <= kfs[0].frame) return { found: true, value: kfs[0].attributes[attr] };
+  if (f >= kfs[kfs.length - 1].frame) return { found: true, value: kfs[kfs.length - 1].attributes[attr] };
+  for (let i = 0; i < kfs.length - 1; i++) {
+    if (f >= kfs[i].frame && f <= kfs[i + 1].frame) {
+      const va = Number(kfs[i].attributes[attr]);
+      const vb = Number(kfs[i + 1].attributes[attr]);
+      if (Number.isFinite(va) && Number.isFinite(vb)) {
+        const t = (f - kfs[i].frame) / (kfs[i + 1].frame - kfs[i].frame || 1);
+        return { found: true, value: va + (vb - va) * t };
+      }
+      return {
+        found: true,
+        value: f - kfs[i].frame <= kfs[i + 1].frame - f ? kfs[i].attributes[attr] : kfs[i + 1].attributes[attr],
+      };
+    }
+  }
+  return { found: false, value: undefined };
+}
+
 function readAttr(state, id, attr) {
   if (id.startsWith("comp#") || compOf(state, id)) {
     const comp = compOf(state, id);
@@ -126,6 +156,26 @@ function readAttr(state, id, attr) {
   const layer = layerOf(state, id);
   if (attr === "name") return layer.name;
   const attrs = layer.attrs ?? {};
+  // Cavalry's api.get returns the value evaluated at the playhead, so
+  // keyframes win over any stale static value and interpolate linearly
+  // between their neighbours.
+  const evaluated = evalKeyframes(state, id, attr);
+  if (evaluated.found) return evaluated.value;
+  // Compounds compose from animated axes: position.x keyframes surface
+  // through a position read too, like the real evaluation does.
+  if (attr === "position" || attr === "scale") {
+    const isPosition = attr === "position";
+    const base = isPosition
+      ? positionOf(layer)
+      : Array.isArray(attrs.scale)
+        ? attrs.scale
+        : [Number(attrs["scale.x"]) || 1, Number(attrs["scale.y"]) || 1];
+    const axisNames = isPosition ? ["position.x", "position.y"] : ["scale.x", "scale.y"];
+    const fallbacks = isPosition ? [base.x, base.y] : [base[0], base[1]];
+    const x = evalKeyframes(state, id, axisNames[0]);
+    const y = evalKeyframes(state, id, axisNames[1]);
+    if (x.found || y.found) return [x.found ? Number(x.value) : fallbacks[0], y.found ? Number(y.value) : fallbacks[1]];
+  }
   if (attr in attrs) return attrs[attr];
   if (attr.includes(".")) {
     let value = attrs;
@@ -313,6 +363,10 @@ export function buildMockApi(state, hooks = {}) {
         if (!kf) continue;
         if (spec.newFrame != null) kf.frame = Number(spec.newFrame);
         if (spec.newValue !== undefined) kf.attributes[attr] = spec.newValue;
+        if (spec.type != null) {
+          const key = `${id}|${attr}|${frame}`;
+          state.tangents[key] = { ...(state.tangents[key] ?? {}), type: Number(spec.type) };
+        }
       }
     },
     magicEasing(id, attrPath, frame, name, expression) {
@@ -341,13 +395,80 @@ export function buildMockApi(state, hooks = {}) {
     },
     setKeyframeVelocity(id, dict) {
       layerOf(state, id);
+      for (const [attr, spec] of Object.entries(dict ?? {})) {
+        const frame = Number(spec?.frame);
+        if (!Number.isFinite(frame)) continue;
+        state.tangents[`${id}|${attr}|${frame}`] = {
+          ...(state.tangents[`${id}|${attr}|${frame}`] ?? {}),
+          velocity: { ...spec },
+        };
+      }
       state.order.push(`setKeyframeVelocity:${id}:${JSON.stringify(dict)}`);
     },
     clearKeyframeVelocity(id, dict) {
       layerOf(state, id);
+      for (const [attr, spec] of Object.entries(dict ?? {})) {
+        const key = `${id}|${attr}|${Number(spec?.frame)}`;
+        if (state.tangents[key]) delete state.tangents[key].velocity;
+      }
       state.order.push(`clearKeyframeVelocity:${id}:${JSON.stringify(dict)}`);
     },
+    modifyKeyframeTangent(id, dictionary) {
+      layerOf(state, id);
+      for (const [attr, spec] of Object.entries(dictionary ?? {})) {
+        if (!spec || typeof spec !== "object") continue;
+        const frame = Number(spec.frame);
+        if (!Number.isFinite(frame)) continue;
+        const key = `${id}|${attr}|${frame}`;
+        const current = state.tangents[key] ?? { inAngle: 0, inWeight: null, outAngle: 0, outWeight: null };
+        const both = spec.inHandle !== false && spec.outHandle !== false;
+        const touchIn = both || spec.inHandle === true;
+        const touchOut = both || spec.outHandle === true;
+        if (spec.angle != null) {
+          if (touchIn) current.inAngle = Number(spec.angle);
+          if (touchOut) current.outAngle = Number(spec.angle);
+        }
+        if (spec.weight != null) {
+          if (touchIn) current.inWeight = Number(spec.weight);
+          if (touchOut) current.outWeight = Number(spec.weight);
+        }
+        current.type = 0;
+        state.tangents[key] = current;
+      }
+    },
+    getKeyframeIdsForAttribute(id, attr) {
+      layerOf(state, id);
+      return state.keyframes
+        .map((k, index) => ({ k, index }))
+        .filter(({ k }) => k.layerId === id && attr in k.attributes)
+        .map(({ index }) => `kf#${index + 1}`);
+    },
+    getSelectedKeyframeIds() {
+      return [...state.keyframeSelection];
+    },
+    setSelectedKeyframeIds(ids) {
+      state.keyframeSelection = (ids ?? []).map(String);
+    },
     getSelectedKeyframes() {
+      // Keyframe-id selection (set via setSelectedKeyframeIds) returns the
+      // per-keyframe detail the tangent guard reads back.
+      if (state.keyframeSelection.length) {
+        const detail = {};
+        for (const kfId of state.keyframeSelection) {
+          const index = Number(String(kfId).replace(/^kf#/, "")) - 1;
+          const kf = state.keyframes[index];
+          if (!kf) continue;
+          for (const attr of Object.keys(kf.attributes)) {
+            detail[`${kf.layerId}:${attr}:${kf.frame}`] = {
+              layerId: kf.layerId,
+              attr,
+              frame: kf.frame,
+              ...(state.tangents[`${kf.layerId}|${attr}|${kf.frame}`] ?? {}),
+            };
+          }
+        }
+        return detail;
+      }
       const byLayer = {};
       for (const id of state.selection) {
         const attrs = {};

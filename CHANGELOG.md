@@ -3,6 +3,65 @@
 Notable changes to `cavalry-mcp`. Earlier releases are described by their commit
 subjects (`git log --oneline`) rather than retroactively transcribed here.
 
+## 3.2.0 — 2026-11-01
+
+Tangent-safe keyframe patching, the refclone macro surface, and evaluated beat
+sampling — the runtime side of the 1:1 video-clone stack.
+
+### Added
+
+- **Weighted cubic Bézier tuples in `_mg.kf`**: entries may now be
+  `[frame, value, { inWeight, inAngle, outWeight, outAngle, interpolation? }]`.
+  Explicit handles are written through `api.modifyKeyframeTangent` (per side,
+  `angleLocked`/`weightLocked` false) inside the same undo group; plain
+  `[frame, value]` pairs are unchanged. Angles are Cavalry tangent angles
+  (0 = flat), weights are in frames.
+- **Tangent-safe patching**: `_mg.patch` with a `frame` now routes through
+  `patchKeyframeSafe` — each target attribute's keyframe state is snapshotted
+  before the write (`getKeyframeTimes` + feature-detected
+  `setSelectedKeyframeIds`/`getSelectedKeyframes` readback), the patch writes
+  at exactly the target frame (neighbour tangents are never rewritten), and
+  the caller's keyframe selection is restored, all inside the atomic undo
+  group.
+- **Refclone Stage 3/4 macros** (emitted by refclone's compiler, executed by
+  this runtime for the first time):
+  `_mg.keyframe({ element, property, startFrame, endFrame, startValue,
+  endValue, easing? })` (property aliases x/y/scale_x/scale_y, easing as a
+  magic name or `{ type: "cubic-bezier", y1, y2 }` mapped to the nearest
+  accepted curve, never "Custom", or `{ type: "weighted-bezier", ...handles }`);
+  `_mg.keyframes({ element, property, points, easing? })` (per-point handles
+  bypass the segment easing);
+  `_mg.behavior({ element, type: "spring", property, startFrame, parameters,
+  duration })` (analytic damped spring baked to per-frame keyframes);
+  `_mg.duplicator({ base, count, distribution, size, stagger, falloff })`
+  object form (linear|grid|circle|point, stagger + falloff nodes wired);
+  `_mg.undoGroup({ id, name, operations })` (nesting collapses to the
+  outermost pair).
+- **Studio `_mg` shorthands**: `_mg.trim` (trimStart/trimEnd/trimOffset +
+  animated trimEnd travel), `_mg.mask` (alpha|invertedAlpha|luminance matte
+  binding with reported — not swallowed — failures), `_mg.blend`,
+  `_mg.typography` (fontSize/lineHeight→lineSpacing/letterSpacing/
+  textBoxSize), `_mg.subMeshLevel` ("characters"|"words"|"lines" → levelMode
+  0|1|2, reusing an existing subMesh deformer), `_mg.filter` (motionBlur
+  attribute + gaussianBlurFilter/dropShadowFilter/grainFilter nodes connected
+  to `filters`), `_mg.corner`.
+- **Evaluated beat sampling in `cavalry_inspect`**: new optional
+  `sampleFrames` (max 16) and `sampleIds` (max 50) inputs. When present, the
+  tool additionally returns per-frame evaluated world-space bounding boxes,
+  world position/scale/rotation, effective opacity and incoming attribute
+  connections for each sampled layer, with the playhead restored and a larger
+  bounded output budget.
+
+### Changed
+
+- `test/mock-cavalry-api.js` models tangent state
+  (`modifyKeyframeTangent`, `setKeyframeVelocity`, keyframe selection), and
+  `api.get` now evaluates keyframes at the playhead (linear between
+  neighbours, keyframes win over static values, `position`/`scale` compose
+  from animated axes) — matching live Cavalry readback semantics.
+- `types/cavalry.d.ts` documents the tangent/velocity/selection/evaluation
+  API surface and the new `_mg` macros.
+
 ## 3.1.0 — 2026-11-01
 
 The four tools that a real clone job kept needing, promoted out of the legacy

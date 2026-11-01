@@ -8,7 +8,7 @@ import { compileInspection } from "./runtime/inspect.js";
 import { registerCoreTools } from "./core_tools.js";
 import { registerLegacyTools } from "./legacy.js";
 
-const server = new McpServer({ name: "cavalry-mcp", version: "3.0.0" });
+const server = new McpServer({ name: "cavalry-mcp", version: "3.2.0" });
 
 function result(outcome: ScriptOutcome) {
   return {
@@ -29,9 +29,14 @@ server.tool(
 
 server.tool(
   "cavalry_inspect",
-  "Inspect compact layer id/name/niceName/type summaries for the selection or active composition roots.",
-  { mode: z.enum(["selection", "roots"]).default("selection") },
-  async ({ mode }) => result(await executeMotionScript(compileInspection(mode), undefined, { helpers: false })),
+  "Inspect compact layer id/name/niceName/type summaries for the selection or active composition roots. Pass sampleFrames to also evaluate per-frame world-space bounding boxes, transforms, opacity and connections for the sampled layers (evaluated beat telemetry).",
+  {
+    mode: z.enum(["selection", "roots"]).default("selection"),
+    sampleFrames: z.array(z.number().int()).max(16).optional(),
+    sampleIds: z.array(z.string()).max(50).optional(),
+  },
+  async ({ mode, sampleFrames, sampleIds }) =>
+    result(await executeMotionScript(compileInspection(mode, { sampleFrames, sampleIds }), undefined, { helpers: false })),
 );
 
 server.tool(

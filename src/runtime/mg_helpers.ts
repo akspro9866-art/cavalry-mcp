@@ -58,7 +58,43 @@ const _mg = {
     _mg.wire(subMeshId, "id", textId, "deformers");
     return { subMeshId, staggerId };
   },
+  /**
+   * Duplicator rig. Legacy positional form (shapeId, distType, count, size,
+   * attrs) is unchanged. The object form emitted by refclone accepts
+   * { base, count, distribution, size, attrs, stagger, falloff } where
+   * distribution is "linear" | "grid" | "circle" | "point", stagger is
+   * { type, lagFrames, offset } and falloff is { type, influence } — a
+   * stagger node and a falloff node are created and wired when requested.
+   */
   duplicator(shapeId, distType = "grid", count = [5, 5], size = [1200, 700], attrs = {}) {
+    if (shapeId && typeof shapeId === "object") {
+      const spec = shapeId;
+      const base = spec.base != null ? spec.base : spec.shapeId;
+      if (base == null) throw new Error("_mg.duplicator object form requires base");
+      const dist = String(spec.distribution || "linear");
+      const linear = dist.indexOf("linear") === 0 || dist === "circle" || dist === "point";
+      const countArg = Array.isArray(spec.count) ? spec.count : (Number(spec.count) || 2);
+      const dupId = _rb.dup(base, {
+        distribution: linear ? "linear" : "grid",
+        count: countArg,
+        size: spec.size || [1200, 700],
+        attrs: spec.attrs || {}
+      });
+      if (dist === "circle" || dist === "point") {
+        try { this.set(dupId, { distribution: dist }); } catch (e) { console.warn("_mg.duplicator: distribution '" + dist + "' rejected: " + e); }
+      }
+      if (spec.falloff) {
+        const cfg = typeof spec.falloff === "number" ? { influence: spec.falloff } : spec.falloff;
+        const falloffId = this.layer("falloff", "Duplicator Falloff", { influence: Number(cfg.influence != null ? cfg.influence : 1) });
+        try { api.connect(falloffId, "id", dupId, "deformers"); } catch (e) { console.warn("_mg.duplicator: falloff connect failed: " + e); }
+      }
+      if (spec.stagger) {
+        const cfg = typeof spec.stagger === "number" ? { offset: spec.stagger } : spec.stagger;
+        const staggerId = this.layer("stagger", "Duplicator Stagger", { offset: Math.round(Number(cfg.lagFrames != null ? cfg.lagFrames : (cfg.offset != null ? cfg.offset : 4))) });
+        try { api.connect(staggerId, "id", dupId, "shapeTimeOffset"); } catch (e) { console.warn("_mg.duplicator: stagger connect failed: " + e); }
+      }
+      return dupId;
+    }
     const linear = String(distType).indexOf("linear") === 0;
     const dupId = _rb.dup(shapeId, {
       distribution: linear ? "linear" : "grid",
@@ -68,8 +104,31 @@ const _mg = {
     });
     return dupId;
   },
+  /**
+   * Keyframe writer. framesAndValues accepts plain [frame, value] pairs
+   * (delegated to _rb.kf with the named magic easing, unchanged behaviour) or
+   * weighted cubic Bézier tuples [frame, value, { inWeight, inAngle,
+   * outWeight, outAngle, interpolation? }] where the explicit handles are
+   * written through api.modifyKeyframeTangent inside the same undo group.
+   * Angles are Cavalry tangent angles (0 = flat); weights are in frames.
+   */
   kf(id, attr, framesAndValues, magicEase = "SpringOut") {
-    return _rb.kf(id, attr, framesAndValues, magicEase);
+    const hasHandles = framesAndValues.some((entry) => Array.isArray(entry) && entry.length > 2 && entry[2] && typeof entry[2] === "object");
+    if (!hasHandles) return _rb.kf(id, attr, framesAndValues, magicEase);
+    const ease = magicEase == null ? null : this.__easeName(magicEase);
+    const written = [];
+    for (let i = 0; i < framesAndValues.length; i++) {
+      const entry = framesAndValues[i];
+      if (!Array.isArray(entry) || entry.length < 2) throw new Error("_mg.kf expects [frame, value] or [frame, value, handles] tuples");
+      const frame = Math.round(Number(entry[0]));
+      const handles = entry.length > 2 && entry[2] && typeof entry[2] === "object" ? entry[2] : null;
+      this.__kfWrite(id, attr, frame, entry[1], handles);
+      if (!handles && ease && i < framesAndValues.length - 1) {
+        try { api.magicEasing(id, attr, frame, ease); } catch (e) {}
+      }
+      written.push(frame);
+    }
+    return written;
   },
 
   /**
@@ -244,7 +303,7 @@ const _mg = {
           }
         }
         if (Object.keys(attrs).length) {
-          if (frame != null && isFinite(frame)) api.keyframe(id, frame, attrs);
+          if (frame != null && isFinite(frame)) this.patchKeyframeSafe(id, attrs, frame);
           else this.set(id, attrs);
           changes.push({ id: id, attrs: attrs, frame: frame });
         }
@@ -1158,6 +1217,405 @@ const _mg = {
     }
 
     throw new Error("syncToFrames: unknown mode " + mode);
+  },
+
+  /**
+   * Write one keyframe, optionally with explicit weighted cubic Bézier
+   * handles. Plain writes are a bare api.keyframe at exactly 'frame'; handle
+   * objects add api.modifyKeyframeTangent (per side) and api.modifyKeyframe
+   * (interpolation type) on the same frame. Neighbouring keyframes are never
+   * touched — tangent safety comes from writing only at 'frame'.
+   */
+  __kfWrite(id, attr, frame, value, handles) {
+    const dict = {};
+    dict[attr] = value;
+    api.keyframe(id, frame, dict);
+    if (!handles) return { frame: frame, tangents: false };
+    const tangents = [];
+    const wantsIn = handles.inWeight != null || handles.inAngle != null;
+    const wantsOut = handles.outWeight != null || handles.outAngle != null;
+    if (wantsIn) {
+      const spec = { frame: frame, inHandle: true, outHandle: false, angleLocked: false, weightLocked: false };
+      if (handles.inAngle != null) spec.angle = Number(handles.inAngle);
+      if (handles.inWeight != null) spec.weight = Number(handles.inWeight);
+      const t = {}; t[attr] = spec;
+      try { api.modifyKeyframeTangent(id, t); tangents.push("in"); } catch (e) {}
+    }
+    if (wantsOut) {
+      const spec = { frame: frame, inHandle: false, outHandle: true, angleLocked: false, weightLocked: false };
+      if (handles.outAngle != null) spec.angle = Number(handles.outAngle);
+      if (handles.outWeight != null) spec.weight = Number(handles.outWeight);
+      const t = {}; t[attr] = spec;
+      try { api.modifyKeyframeTangent(id, t); tangents.push("out"); } catch (e) {}
+    }
+    if (handles.interpolation != null) {
+      const m = {}; m[attr] = { frame: frame, type: Math.round(Number(handles.interpolation)) };
+      try { api.modifyKeyframe(id, m); } catch (e) {}
+    }
+    return { frame: frame, tangents: tangents };
+  },
+
+  /**
+   * Snapshot everything readable about the keyframes of (id, attr) before a
+   * patch touches it: the keyframe times, and — when this Cavalry build
+   * exposes keyframe selection — the raw selected-keyframe state of each
+   * keyframe id. The caller's keyframe selection is captured and restored.
+   * Cavalry 2.8 has no per-keyframe tangent getter, so what cannot be read
+   * cannot be restored; the guarantee is that the patch never writes at any
+   * frame other than the target.
+   */
+  __kfGuardSnapshot(id, attr) {
+    const guard = { id: id, attr: attr, times: [], selection: null, keyframes: null };
+    try { guard.times = (api.getKeyframeTimes(id, attr) || []).slice().sort((a, b) => a - b); } catch (e) {}
+    const canSelect = typeof api.setSelectedKeyframeIds === "function"
+      && typeof api.getKeyframeIdsForAttribute === "function"
+      && typeof api.getSelectedKeyframes === "function";
+    if (!canSelect) return guard;
+    try {
+      if (typeof api.getSelectedKeyframeIds === "function") guard.selection = api.getSelectedKeyframeIds() || [];
+    } catch (e) {}
+    let kfIds = [];
+    try { kfIds = api.getKeyframeIdsForAttribute(id, attr) || []; } catch (e) {}
+    if (kfIds.length) {
+      try {
+        api.setSelectedKeyframeIds(kfIds);
+        guard.keyframes = api.getSelectedKeyframes();
+      } catch (e) {
+        guard.keyframes = null;
+      }
+    }
+    return guard;
+  },
+
+  /** Re-assert recorded keyframe state and restore the caller's selection. */
+  __kfGuardRestore(guard) {
+    if (!guard) return;
+    try {
+      if (guard.selection && typeof api.setSelectedKeyframeIds === "function") api.setSelectedKeyframeIds(guard.selection);
+    } catch (e) {}
+  },
+
+  /**
+   * Tangent-safe keyframe patch: writes value(s) at exactly 'frame' for every
+   * attr in 'attrs', having snapshotted each attribute's keyframe state, and
+   * restores the selection inside the same undo group. Neighbour tangents are
+   * never rewritten by this path.
+   */
+  patchKeyframeSafe(id, attrs, frame) {
+    const guards = {};
+    const keys = Object.keys(attrs || {});
+    for (let k = 0; k < keys.length; k++) guards[keys[k]] = this.__kfGuardSnapshot(id, keys[k]);
+    try {
+      for (let k = 0; k < keys.length; k++) this.__kfWrite(id, keys[k], Math.round(Number(frame)), attrs[keys[k]], null);
+    } finally {
+      for (let k = 0; k < keys.length; k++) this.__kfGuardRestore(guards[keys[k]]);
+    }
+    return { id: id, frame: Math.round(Number(frame)), attrs: keys, guarded: Object.keys(guards).length };
+  },
+
+  /** Open one undo group for the whole operations body; nesting is collapsed. */
+  undoGroup(spec) {
+    spec = spec || {};
+    if (typeof spec.operations !== "function") throw new Error("_mg.undoGroup requires an operations function");
+    const outermost = !this.__undoDepth;
+    this.__undoDepth = (this.__undoDepth || 0) + 1;
+    const canUndo = outermost && typeof api.startUndoGroup === "function";
+    if (canUndo) api.startUndoGroup(String(spec.name || spec.id || "refclone batch"));
+    try {
+      return spec.operations();
+    } finally {
+      this.__undoDepth -= 1;
+      if (canUndo && typeof api.endUndoGroup === "function") api.endUndoGroup();
+    }
+  },
+
+  /**
+   * Declarative two-boundary keyframe macro emitted by refclone Stage 3/4.
+   * spec = { element, property, startFrame, endFrame, startValue, endValue, easing? }
+   * easing: "BounceOut" | { name } | { type: "cubic-bezier", y1, y2 }
+   *   | { type: "weighted-bezier", inWeight, inAngle, outWeight, outAngle }
+   * property aliases: x→position.x, y→position.y, scale_x→scale.x,
+   * scale_y→scale.y; "position"/"scale" drive both axes with the same values.
+   */
+  keyframe(spec) {
+    if (!spec || spec.element == null || spec.property == null) throw new Error("_mg.keyframe requires element and property");
+    const startFrame = Math.round(Number(spec.startFrame));
+    const endFrame = Math.round(Number(spec.endFrame));
+    if (!isFinite(startFrame) || !isFinite(endFrame) || startFrame === endFrame) {
+      throw new Error("_mg.keyframe requires distinct integer startFrame and endFrame");
+    }
+    const startValue = Number(spec.startValue);
+    const endValue = Number(spec.endValue);
+    if (!isFinite(startValue) || !isFinite(endValue)) throw new Error("_mg.keyframe requires finite startValue and endValue");
+    const attrs = this.__propertyAttrs(spec.property);
+    const easing = spec.easing || {};
+    let handles = null;
+    let name = null;
+    if (typeof easing === "string") name = easing;
+    else if (easing.type === "weighted-bezier" || easing.inWeight != null || easing.outWeight != null) {
+      handles = { inWeight: easing.inWeight, inAngle: easing.inAngle, outWeight: easing.outWeight, outAngle: easing.outAngle };
+    } else if (easing.type === "cubic-bezier" || easing.y1 != null) {
+      name = this.__nearestEase([0.25, Number(easing.y1) || 0, 0.75, Number(easing.y2) || 1]);
+    } else if (easing.name) name = easing.name;
+    const resolved = name ? this.__easeName(name) : null;
+    for (let i = 0; i < attrs.length; i++) {
+      if (handles) {
+        this.__kfWrite(spec.element, attrs[i], startFrame, startValue, handles);
+        this.__kfWrite(spec.element, attrs[i], endFrame, endValue, handles);
+      } else {
+        this.kf(spec.element, attrs[i], [[startFrame, startValue], [endFrame, endValue]], resolved || "None");
+      }
+    }
+    return { element: spec.element, property: spec.property, attrs: attrs, easing: handles ? "weighted-bezier" : (resolved || "None"), startFrame: startFrame, endFrame: endFrame };
+  },
+
+  /**
+   * Multi-point keyframe macro: { element, property, points: [{ frame, value,
+   * handles? }...], easing? }. The easing applies to every outgoing segment
+   * (Cavalry magic easing is per-keyframe-outgoing); explicit per-point
+   * handles bypass it for that keyframe.
+   */
+  keyframes(spec) {
+    if (!spec || spec.element == null || spec.property == null) throw new Error("_mg.keyframes requires element and property");
+    const points = Array.isArray(spec.points) ? spec.points : [];
+    if (points.length < 2) throw new Error("_mg.keyframes requires at least two points");
+    const attrs = this.__propertyAttrs(spec.property);
+    const easing = spec.easing || {};
+    let name = typeof easing === "string" ? easing : (easing.name || (easing.type === "cubic-bezier" ? this.__nearestEase([0.25, Number(easing.y1) || 0, 0.75, Number(easing.y2) || 1]) : null));
+    const resolved = name ? this.__easeName(name) : "None";
+    const applied = [];
+    for (let i = 0; i < attrs.length; i++) {
+      const attr = attrs[i];
+      for (let p = 0; p < points.length; p++) {
+        const point = points[p] || {};
+        const frame = Math.round(Number(point.frame));
+        if (!isFinite(frame)) throw new Error("_mg.keyframes points require integer frames");
+        const handles = point.handles || null;
+        this.__kfWrite(spec.element, attr, frame, point.value, handles);
+        if (!handles && p < points.length - 1) {
+          try { api.magicEasing(spec.element, attr, frame, resolved); } catch (e) {}
+        }
+        applied.push({ attr: attr, frame: frame });
+      }
+    }
+    return { element: spec.element, property: spec.property, attrs: attrs, points: applied.length / attrs.length, easing: resolved };
+  },
+
+  /**
+   * Behaviour macro emitted for damped-spring promotions: bakes the analytic
+   * spring y(t) = target - exp(-z*w*t) * cos(wd*t) * (target - initial) into
+   * per-frame keyframes with linear interpolation (a faithful piecewise
+   * sampling of the continuous curve, no tangent guessing).
+   * spec = { element, type: "spring", property, startFrame,
+   *          parameters: { dampingRatio, naturalFrequency, initialValue, targetValue }, duration? }
+   */
+  behavior(spec) {
+    if (!spec || spec.element == null || spec.property == null) throw new Error("_mg.behavior requires element and property");
+    const type = String(spec.type || "spring").toLowerCase();
+    const params = spec.parameters || {};
+    if (type !== "spring") throw new Error("_mg.behavior supports type 'spring' (got " + type + ")");
+    const zeta = Number(params.dampingRatio);
+    const omega0 = Number(params.naturalFrequency);
+    const initial = Number(params.initialValue);
+    const target = Number(params.targetValue);
+    if (!(zeta >= 0) || !(omega0 > 0)) throw new Error("_mg.behavior spring requires dampingRatio >= 0 and naturalFrequency > 0");
+    if (!isFinite(initial) || !isFinite(target)) throw new Error("_mg.behavior spring requires finite initialValue and targetValue");
+    const startFrame = Math.round(Number(spec.startFrame)) || 0;
+    const duration = Math.round(Number(spec.duration)) || 0;
+    let endFrame = startFrame + duration;
+    if (!(duration > 0)) {
+      try { endFrame = Math.round(Number(api.get(api.getActiveComp(), "endFrame")) || 0); } catch (e) { endFrame = 0; }
+    }
+    if (!(endFrame > startFrame)) endFrame = startFrame + 48;
+    const attrs = this.__propertyAttrs(spec.property);
+    const wd = omega0 * Math.sqrt(Math.max(0, 1 - zeta * zeta));
+    const baked = [];
+    for (let i = 0; i < attrs.length; i++) {
+      const attr = attrs[i];
+      const pts = [];
+      for (let f = startFrame; f <= endFrame; f++) {
+        const time = f - startFrame;
+        const envelope = Math.exp(-zeta * omega0 * time);
+        const value = target - envelope * Math.cos(wd * time) * (target - initial);
+        pts.push([f, value]);
+      }
+      _rb.kf(spec.element, attr, pts, "None");
+      baked.push({ attr: attr, keyframes: pts.length });
+    }
+    return { element: spec.element, type: "spring", property: spec.property, attrs: attrs, keyframes: baked };
+  },
+
+  /** Map refclone property aliases to concrete attribute paths. */
+  __propertyAttrs(property) {
+    const p = String(property);
+    if (p === "x") return ["position.x"];
+    if (p === "y") return ["position.y"];
+    if (p === "scale_x") return ["scale.x"];
+    if (p === "scale_y") return ["scale.y"];
+    if (p === "position") return ["position.x", "position.y"];
+    if (p === "scale") return ["scale.x", "scale.y"];
+    return [p];
+  },
+
+  /**
+   * Trim-path shorthand on a stroke/shape layer. 'start'/'end' are percentages
+   * (trimStart/trimEnd), 'offset' shifts the trim window; 'travel' animates
+   * trimEnd across the comp — a number means [0 → travel] over the comp range,
+   * or pass { inFrame, outFrame, from, to, easing? } for explicit bounds.
+   */
+  trim(id, spec) {
+    spec = spec || {};
+    const attrs = {};
+    if (spec.start != null) attrs.trimStart = Number(spec.start);
+    if (spec.end != null) attrs.trimEnd = Number(spec.end);
+    if (spec.offset != null) attrs.trimOffset = Number(spec.offset);
+    if (Object.keys(attrs).length) this.set(id, attrs);
+    let traveled = null;
+    if (spec.travel != null) {
+      const cfg = typeof spec.travel === "number" ? { inFrame: 0, from: 0, to: Number(spec.travel) } : spec.travel;
+      let outFrame = cfg.outFrame;
+      if (outFrame == null) {
+        try { outFrame = Math.round(Number(api.get(api.getActiveComp(), "endFrame")) || 0); } catch (e) { outFrame = 0; }
+      }
+      const inFrame = Math.round(Number(cfg.inFrame)) || 0;
+      const from = Number(cfg.from) || 0;
+      const to = Number(cfg.to != null ? cfg.to : (spec.end != null ? spec.end : 100));
+      _rb.kf(id, "trimEnd", [[inFrame, from], [Math.round(Number(outFrame)), to]], cfg.easing || spec.easing || "SlowOut");
+      traveled = { attr: "trimEnd", from: from, to: to, inFrame: inFrame, outFrame: Math.round(Number(outFrame)) };
+    }
+    return { id: id, attrs: attrs, travel: traveled };
+  },
+
+  /**
+   * Clipping-mask / track-matte binding. 'masks' is an array of
+   * { id, mode: "alpha" | "invertedAlpha" | "luminance" }. The mask layer ids
+   * are written to the target's 'masks' attribute and the matte mode is set
+   * per entry. Failures are reported, never swallowed.
+   */
+  mask(targetId, masks) {
+    const list = Array.isArray(masks) ? masks : [masks];
+    const MODES = { alpha: 0, invertedAlpha: 1, luminance: 2 };
+    const applied = [];
+    const warnings = [];
+    const ids = [];
+    for (let i = 0; i < list.length; i++) {
+      const entry = list[i] || {};
+      const maskId = entry.id != null ? String(entry.id) : (entry.idPath != null ? String(entry.idPath) : null);
+      if (!maskId) { warnings.push("mask entry missing id"); continue; }
+      ids.push(maskId);
+      const mode = entry.mode == null ? "alpha" : String(entry.mode);
+      if (!(mode in MODES)) warnings.push("unknown matte mode '" + mode + "'");
+      applied.push({ id: maskId, mode: mode });
+    }
+    if (ids.length) {
+      try { this.set(targetId, { masks: ids }); } catch (e) { warnings.push("masks attribute rejected: " + e); }
+      const first = applied[0] && applied[0].mode in MODES ? MODES[applied[0].mode] : null;
+      if (first != null) {
+        try { this.set(targetId, { matteMode: first }); } catch (e) { warnings.push("matteMode rejected: " + e); }
+      }
+    }
+    if (warnings.length) {
+      for (let w = 0; w < warnings.length; w++) console.warn("_mg.mask: " + warnings[w]);
+    }
+    return { target: targetId, applied: applied, warnings: warnings };
+  },
+
+  /** Skia-style blend mode on a layer or group (live attribute: blendMode). */
+  blend(id, mode) {
+    this.set(id, { blendMode: String(mode) });
+    return { id: id, blendMode: String(mode) };
+  },
+
+  /**
+   * Typography shorthand for textShape layers: fontSize, lineHeight (written
+   * to the live lineSpacing attribute), letterSpacing and textBoxSize.
+   */
+  typography(id, spec) {
+    spec = spec || {};
+    const attrs = {};
+    if (spec.fontSize != null) attrs.fontSize = Number(spec.fontSize);
+    if (spec.lineHeight != null) attrs.lineSpacing = Number(spec.lineHeight);
+    if (spec.letterSpacing != null) attrs.letterSpacing = Number(spec.letterSpacing);
+    if (spec.textBoxSize != null) attrs.textBoxSize = spec.textBoxSize;
+    if (Object.keys(attrs).length) this.set(id, attrs);
+    return { id: id, attrs: attrs };
+  },
+
+  /**
+   * SubMesh level targeting by name: "characters" | "words" | "lines" →
+   * levelMode 0 | 1 | 2 on the text's subMesh deformer (created when absent).
+   */
+  subMeshLevel(textId, level) {
+    const LEVELS = { characters: 0, words: 1, lines: 2 };
+    const numeric = typeof level === "number" ? level : LEVELS[String(level).toLowerCase()];
+    if (!(numeric >= 0 && numeric <= 2)) throw new Error("_mg.subMeshLevel: level must be characters|words|lines (got " + level + ")");
+    let subMeshId = null;
+    try {
+      const incoming = api.getInConnectedAttributes(textId) || [];
+      for (let i = 0; i < incoming.length; i++) {
+        if (String(incoming[i]).indexOf("deformers") !== 0) continue;
+        // getInConnection returns a single "sourceId.attr" descriptor (or an
+        // array of them on some builds) — normalise both shapes.
+        const raw = api.getInConnection(textId, incoming[i]);
+        const sources = Array.isArray(raw) ? raw : [raw];
+        for (let s = 0; s < sources.length; s++) {
+          const otherId = String(sources[s] || "").split(".")[0];
+          if (otherId && api.getLayerType(otherId) === "subMesh") { subMeshId = otherId; break; }
+        }
+        if (subMeshId) break;
+      }
+    } catch (e) {}
+    if (subMeshId) {
+      this.set(subMeshId, { levelMode: numeric });
+      return { subMeshId: subMeshId, levelMode: numeric, created: false };
+    }
+    const made = this.subMesh(textId, numeric);
+    return { subMeshId: made.subMeshId, staggerId: made.staggerId, levelMode: numeric, created: true };
+  },
+
+  /**
+   * Filter attachment: { motionBlur?, gaussianBlur?, dropShadow?, noise? }.
+   * motionBlur is the layer attribute; the rest are filter nodes connected to
+   * the target's "filters" attribute (live node names: gaussianBlurFilter,
+   * dropShadowFilter, grainFilter).
+   */
+  filter(id, spec) {
+    spec = spec || {};
+    const applied = [];
+    if (spec.motionBlur != null) {
+      this.set(id, { motionBlur: !!spec.motionBlur });
+      applied.push({ kind: "motionBlur", value: !!spec.motionBlur });
+    }
+    if (spec.gaussianBlur) {
+      const cfg = typeof spec.gaussianBlur === "number" ? { blurRadius: spec.gaussianBlur } : spec.gaussianBlur;
+      const filterId = this.layer("gaussianBlurFilter", "Gaussian Blur", { blurRadius: Number(cfg.blurRadius) || 4 });
+      try { api.connect(filterId, "id", id, "filters"); applied.push({ kind: "gaussianBlur", id: filterId }); } catch (e) { console.warn("_mg.filter: gaussianBlur connect failed: " + e); }
+    }
+    if (spec.dropShadow) {
+      const cfg = typeof spec.dropShadow === "number" ? { shadowRadius: spec.dropShadow } : spec.dropShadow;
+      const attrs = {};
+      if (cfg.radius != null) attrs.shadowRadius = Number(cfg.radius);
+      if (cfg.offsetX != null) attrs.shadowOffsetX = Number(cfg.offsetX);
+      if (cfg.offsetY != null) attrs.shadowOffsetY = Number(cfg.offsetY);
+      if (cfg.color != null) attrs.shadowColor = cfg.color;
+      if (cfg.opacity != null) attrs.shadowOpacity = Number(cfg.opacity);
+      const filterId = this.layer("dropShadowFilter", "Drop Shadow", attrs);
+      try { api.connect(filterId, "id", id, "filters"); applied.push({ kind: "dropShadow", id: filterId }); } catch (e) { console.warn("_mg.filter: dropShadow connect failed: " + e); }
+    }
+    if (spec.noise) {
+      const cfg = typeof spec.noise === "number" ? { grainAmount: spec.noise } : spec.noise;
+      const attrs = {};
+      if (cfg.amount != null) attrs.grainAmount = Number(cfg.amount);
+      const filterId = this.layer("grainFilter", "Noise", attrs);
+      try { api.connect(filterId, "id", id, "filters"); applied.push({ kind: "noise", id: filterId }); } catch (e) { console.warn("_mg.filter: noise connect failed: " + e); }
+    }
+    return { id: id, applied: applied };
+  },
+
+  /** Corner rounding on a shape generator (live attribute: generator.cornerRadius). */
+  corner(id, radius) {
+    this.set(id, { "generator.cornerRadius": Number(radius) || 0 });
+    return { id: id, cornerRadius: Number(radius) || 0 };
   },
 
   selection() {

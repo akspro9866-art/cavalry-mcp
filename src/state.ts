@@ -27,6 +27,14 @@ export interface ExecutionCompInfo {
   height?: number | null;
 }
 
+export interface ExecutionReceipt {
+  sceneStateHash?: string | null;
+  consoleDiagnostics?: Array<{ level: string; text: string }>;
+  beatBBoxes?: Record<string, Record<string, unknown>>;
+  apiDiagnostics?: { invalidAttrs?: string[]; failedConnections?: string[] };
+  receiptError?: string;
+}
+
 export interface ExecutionState {
   seq?: string;
   status: "ok" | "error";
@@ -36,6 +44,8 @@ export interface ExecutionState {
   compInfo: ExecutionCompInfo | null;
   boundingBoxes: Record<string, ExecutionBoundingBox>;
   modifiedLayerIds?: string[];
+  /** Deterministic post-execution receipt from bridges at Stallion v0.10+. */
+  receipt?: ExecutionReceipt | null;
   durationMs?: number;
   writtenAt?: string;
   writeFailed?: string;
@@ -119,6 +129,7 @@ function normalizeState(value: unknown): ExecutionState | null {
     boundingBoxes: boxes,
     modifiedLayerIds: strings(raw.modifiedLayerIds),
   };
+  if (raw.receipt && typeof raw.receipt === "object") state.receipt = raw.receipt as ExecutionReceipt;
   if (typeof raw.durationMs === "number") state.durationMs = raw.durationMs;
   if (typeof raw.writtenAt === "string") state.writtenAt = raw.writtenAt;
   if (typeof raw.writeFailed === "string") state.writeFailed = raw.writeFailed;
