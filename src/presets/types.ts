@@ -72,8 +72,3 @@ export function presetDefaults(def: PresetDef): Record<string, string | number |
   for (const [key, param] of Object.entries(def.params)) out[key] = param.default;
   return out;
 }
-
-/** Defaults with legacy aliases folded in for presets that predate the library. */
-export function defaultsFor(def: PresetDef, overrides: Record<string, unknown>): Record<string, unknown> {
-  return Object.assign(presetDefaults(def), overrides);
-}

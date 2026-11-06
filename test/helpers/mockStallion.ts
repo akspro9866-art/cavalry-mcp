@@ -8,7 +8,7 @@ export {
   buildMockApi,
   executeInMock,
   startMockStallion,
-} from "../mock-cavalry-api.js";
+} from "./mock-cavalry-api.js";
 export type {
   MockApi,
   MockApiHooks,
@@ -17,4 +17,4 @@ export type {
   MockEasing,
   MockKeyframe,
   MockLayer,
-} from "../mock-cavalry-api.js";
+} from "./mock-cavalry-api.js";

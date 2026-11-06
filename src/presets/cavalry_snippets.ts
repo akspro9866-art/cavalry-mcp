@@ -39,7 +39,6 @@ const BY_ID = new Map(PRESET_DEFS.map(def => [def.id, def]));
 /** Canonical preset ids, exposed as a zod-compatible non-empty tuple. */
 export const PRESET_NAMES = PRESET_DEFS.map(def => def.id) as [string, ...string[]];
 
-export type PresetName = string;
 export type PresetOptions = Record<string, unknown>;
 
 /** Legacy ids kept from the original 5-preset build. */

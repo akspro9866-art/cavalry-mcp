@@ -22,7 +22,7 @@
     "dev": "tsc --watch",
     "pretest": "npm run build",
     "test": "node test/run-tests.mjs",
-    "test:watch": "node --import tsx --test --watch \"test/*.test.ts\""
+    "test:watch": "node test/run-tests.mjs --watch"
   },
   "keywords": [
     "mcp",

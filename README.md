@@ -719,7 +719,7 @@ npm test           # 235 tests, no Cavalry required
 The suite runs the real server against an in-memory MCP client and a mock Stallion: an HTTP
 server that executes scripts in a `node:vm` sandbox with a modelled `api`. Bridge behaviour —
 seq matching, the write-failure retry, queue serialization, timeouts, the friendly connection
-error — is therefore covered without Cavalry installed. `test/library.test.ts` compiles and
+error — is therefore covered without Cavalry installed. `test/presets/library.test.ts` compiles and
 executes all 120 presets with defaults and typed overrides against the same mock. Theme,
 telemetry, render-chunking, verify, probe and MCP schema tests run in the same suite.
 
@@ -739,14 +739,26 @@ Useful scripts:
 ```
 src/
   index.ts             MCP server, core registration, legacy gate
-  core_tools.ts        batch, verify, render, probe, doctor
-  legacy.ts            the 44 opt-in granular tools
-  batch.ts             batch operation compiler
-  render-frames.ts     chunked, resumable PNG sequence render
-  verify.ts            frame previews, collisions, missing files
-  probe.ts             live API capability report
-  doctor.ts            bridge/runtime/binary/workspace diagnosis
-  stallion.ts          serialized HTTP client, native + legacy result channels
+  server/
+    core-tools.ts      core MCP tools: batch, verify, render, probe, doctor
+    legacy/
+      index.ts         the 44 opt-in granular tools
+      animate-presets.ts  one-call animation presets for cavalry_animate_in
+      filmstrip.ts     PNG contact sheets for the legacy preview tools
+  tools/
+    batch.ts           batch operation compiler
+    beats.ts           audio-beat analysis
+    doctor.ts          bridge/runtime/binary/workspace diagnosis
+    probe.ts           live API capability report
+    promo.ts           multi-scene MP4 promo renderer
+    render-frames.ts   chunked, resumable PNG sequence render
+    verify.ts          frame previews, collisions, missing files
+  bridge/
+    stallion.ts        serialized HTTP client, native + legacy result channels
+  shared/
+    lib.ts             string, outcome and JSON helpers
+    fs-safe.ts         Windows-safe tree removal
+    state.ts           execution-state snapshots
   runtime/
     atomic.ts          one Undo group, result envelope, state capture
     execute.ts         script execution and result formatting
@@ -758,11 +770,12 @@ src/
     rig_builders.ts      shared `_rb` factories
     manifest.ts          preset manifest builder
     packs/cat01…cat14    the 120 presets
-  beats.ts, promo.ts   audio-beat analysis and multi-scene MP4
 bin/stallion-cli.mjs   the zero-MCP CLI
 scripts/               build-time preset manifest
 types/cavalry.d.ts     API and `_mg` TypeScript declarations
-test/                  unit, mock-bridge, MCP e2e and preset-library tests
+test/
+  bridge/ cli/ e2e/ helpers/ legacy/ presets/ runtime/ server/ shared/ tools/
+                       grouped unit, mock-bridge, MCP e2e and preset-library tests
 ```
 
 ## Credits

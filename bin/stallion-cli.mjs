@@ -3,12 +3,12 @@ import fs from "node:fs";
 import { compilePreset, hasPreset, listPresets, presetRig } from "../dist/presets/cavalry_snippets.js";
 import { executeMotionScript } from "../dist/runtime/execute.js";
 import { compileInspection } from "../dist/runtime/inspect.js";
-import { formatExecutionState } from "../dist/state.js";
-import { loadBeatSource, formatBeatSummary } from "../dist/beats.js";
-import { runPromo } from "../dist/promo.js";
-import { runVerifyFrames } from "../dist/verify.js";
-import { runRenderFrames, formatRenderSummary } from "../dist/render-frames.js";
-import { runProbe } from "../dist/probe.js";
+import { formatExecutionState } from "../dist/shared/state.js";
+import { loadBeatSource, formatBeatSummary } from "../dist/tools/beats.js";
+import { runPromo } from "../dist/tools/promo.js";
+import { runVerifyFrames } from "../dist/tools/verify.js";
+import { runRenderFrames, formatRenderSummary } from "../dist/tools/render-frames.js";
+import { runProbe } from "../dist/tools/probe.js";
 
 const usage = `stallion -e "<javascript>" | -f <script.js> | -p <preset> '<json>' | --list [category] | --rig <preset> | --sel
          --audio-beats <audio|beats.json> [--fps N] [--beats-out <file>] [--ffmpeg <path>]

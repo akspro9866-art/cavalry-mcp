@@ -5,8 +5,8 @@ import { z } from "zod";
 import { compilePreset, PRESET_NAMES } from "./presets/cavalry_snippets.js";
 import { executeMotionScript, type ScriptOutcome } from "./runtime/execute.js";
 import { compileInspection } from "./runtime/inspect.js";
-import { registerCoreTools } from "./core_tools.js";
-import { registerLegacyTools } from "./legacy.js";
+import { registerCoreTools } from "./server/core-tools.js";
+import { registerLegacyTools } from "./server/legacy/index.js";
 
 const server = new McpServer({ name: "cavalry-mcp", version: "3.2.0" });
 

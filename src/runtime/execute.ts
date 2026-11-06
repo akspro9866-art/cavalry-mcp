@@ -1,6 +1,6 @@
-import { parseOutcome, type Outcome } from "../lib.js";
-import { runScriptWithExecution, type StallionConfig } from "../stallion.js";
-import type { ExecutionState } from "../state.js";
+import { parseOutcome, type Outcome } from "../shared/lib.js";
+import { runScriptWithExecution, type StallionConfig } from "../bridge/stallion.js";
+import type { ExecutionState } from "../shared/state.js";
 
 export type ScriptOutcome = Outcome & { state?: ExecutionState | null };
 
