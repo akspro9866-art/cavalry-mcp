@@ -1,5 +1,8 @@
-export type PresetCategoryId =
-  | "typography"
+import type { PresetRigOverride, PresetRigTerms } from "../runtime/rig_terms.js";
+
+export type { PresetRigOverride, PresetRigTerms };
+
+export type PresetCategoryId =  | "typography"
   | "ui_mockups"
   | "data_viz"
   | "polish_camera"
@@ -53,6 +56,14 @@ export interface PresetDef {
   params: Record<string, PresetParamDef>;
   /** JavaScript body executed with __o (params), _mg, _rb and track(key, id). */
   code: string;
+  /**
+   * Optional rig declaration. Normally leave it out: derivePresetRig reads the
+   * numbers off the declared parameters and the easings off the code. Set it when
+   * the easing is data-driven, or when a preset should advertise a stiffness,
+   * damping ratio, overshoot, holdFrames or staggerOffset it reaches through a
+   * differently named knob.
+   */
+  rig?: PresetRigOverride;
 }
 
 /** Flatten param metadata into the default overrides object used by compiled code. */

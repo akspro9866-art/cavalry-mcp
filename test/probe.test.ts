@@ -9,9 +9,10 @@ import type { MockApi } from "./mock-cavalry-api.js";
 import { wrapAtomicScript } from "../src/runtime/atomic.js";
 import { PROBE_FUNCTIONS, buildProbeScript, normalizeProbe, runProbe } from "../src/probe.js";
 import type { ScriptOutcome } from "../src/runtime/execute.js";
+import { removeTreeSync } from "../src/fs-safe.js";
 
 const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "cav-probe-"));
-test.after(() => fs.rmSync(workdir, { recursive: true, force: true }));
+test.after(() => removeTreeSync(workdir));
 
 function sandboxExecutor(api: MockApi) {
   return async (code: string): Promise<ScriptOutcome> => {

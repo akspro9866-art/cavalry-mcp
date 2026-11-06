@@ -67,6 +67,7 @@ import {
 } from "./lib.js";
 import { compileAnimateIn, ANIMATE_PRESETS } from "./presets.js";
 import { decodePng, encodePng, compositeGrid, sampleFrames } from "./filmstrip.js";
+import { removeTreeSync } from "./fs-safe.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -189,7 +190,7 @@ server.tool(
   "cavalry_get_attribute",
   "Read the value of an attribute from a Cavalry layer.",
   {
-    layerId: z.string().describe("The layer ID"),
+    layerId: z.string().describe("The layer ID returned by create_layer, cavalry_batch, or a scene inspection"),
     attrPath: z.string().describe('The attribute path, e.g. "position.x", "fontSize"'),
   },
   async ({ layerId, attrPath }) =>
@@ -220,7 +221,7 @@ server.tool(
 // Tool: keyframe — single or multi-frame in one call
 // ---------------------------------------------------------------------------
 const keyframeItemSchema = z.object({
-  frame: z.number().describe("Frame number"),
+  frame: z.number().describe("Frame number at which the attribute values are keyed"),
   attributes: z.record(z.string(), z.unknown()).describe('Attribute values at this frame, e.g. {"position.x": 0}'),
 });
 
@@ -228,7 +229,7 @@ server.tool(
   "cavalry_keyframe",
   "Set keyframes on a layer. Either a single frame (frame + attributes) or a whole curve in one call via keyframes: [{frame, attributes}] — one bridge round trip regardless of how many keyframes. Returns the keyframe ID(s). Re-keyframing the same attribute+frame replaces the value in place (keeping its easing).",
   {
-    layerId: z.string().describe("The layer ID"),
+    layerId: z.string().describe("The layer ID returned by create_layer, cavalry_batch, or a scene inspection"),
     frame: z.number().optional().describe("Frame for the single-keyframe form"),
     attributes: z.record(z.string(), z.unknown()).optional().describe("Attributes for the single-keyframe form"),
     keyframes: z.array(keyframeItemSchema).optional().describe("Multiple keyframes in one call"),
@@ -260,10 +261,10 @@ server.tool(
   "cavalry_magic_easing",
   `Apply Magic Easing to a keyframe. The easing affects the keyframe's OUTGOING segment (toward the next keyframe). Valid names: ${EASING_LIST}.`,
   {
-    layerId: z.string().describe("The layer ID"),
+    layerId: z.string().describe("The layer ID returned by create_layer, cavalry_batch, or a scene inspection"),
     attrPath: z.string().describe("The attribute path"),
     frame: z.number().describe("The frame of the keyframe to ease"),
-    easingType: z.enum(EASING_NAMES).describe("Easing type"),
+    easingType: z.enum(EASING_NAMES).describe("Cavalry magic-easing name applied to the keyframe outgoing segment"),
     expression: z
       .string()
       .optional()
@@ -291,7 +292,7 @@ server.tool(
   "cavalry_get_keyframes",
   "List keyframe frames for a layer: for one attribute (attrPath) or for every animated attribute of the layer.",
   {
-    layerId: z.string().describe("The layer ID"),
+    layerId: z.string().describe("The layer ID returned by create_layer, cavalry_batch, or a scene inspection"),
     attrPath: z.string().optional().describe("Attribute path; omit to list all animated attributes"),
   },
   async ({ layerId, attrPath }) => {
@@ -314,7 +315,7 @@ server.tool(
   "cavalry_animate_in",
   `Animate a layer's entrance in one call: writes keyframes + Magic Easing relative to the layer's current position (reads position/opacity/weight inside Cavalry first). Presets: fadeIn, fadeUp, springUp (SpringOut), slideInLeft, popIn (SmallSpringOut on weight), dropBounce (BounceOut). Any attribute a layer type lacks is skipped and reported in "failed" — the rest still applies.`,
   {
-    layerId: z.string().describe("The layer ID"),
+    layerId: z.string().describe("The layer ID returned by create_layer, cavalry_batch, or a scene inspection"),
     preset: z.enum(ANIMATE_PRESETS).describe("Animation preset"),
     startFrame: z.number().optional().describe("First keyframe frame (default 0)"),
     duration: z.number().optional().describe("Frames from start to end (default 30)"),
@@ -405,9 +406,9 @@ __result = d;
 // ---------------------------------------------------------------------------
 server.tool(
   "cavalry_rename_layer",
-  "Rename a layer.",
+  "Rename an existing layer without changing its ID, attributes or animation.",
   {
-    layerId: z.string().describe("The layer ID"),
+    layerId: z.string().describe("The layer ID returned by create_layer, cavalry_batch, or a scene inspection"),
     name: z.string().describe("New display name"),
   },
   async ({ layerId, name }) =>
@@ -432,7 +433,7 @@ server.tool(
   "cavalry_set_parent",
   "Parent a layer to another layer (or unparent it by omitting parentLayerId).",
   {
-    layerId: z.string().describe("The layer ID"),
+    layerId: z.string().describe("The layer ID returned by create_layer, cavalry_batch, or a scene inspection"),
     parentLayerId: z.string().optional().describe("New parent layer ID; omit or leave out to unparent"),
   },
   async ({ layerId, parentLayerId }) =>
@@ -448,7 +449,7 @@ server.tool(
   "cavalry_set_layer_timing",
   "Set a layer's in/out points (trim) or slide the whole layer in time. Provide any of inFrame, outFrame, offset (frames).",
   {
-    layerId: z.string().describe("The layer ID"),
+    layerId: z.string().describe("The layer ID returned by create_layer, cavalry_batch, or a scene inspection"),
     inFrame: z.number().optional().describe("New in point (frame)"),
     outFrame: z.number().optional().describe("New out point (frame)"),
     offset: z.number().optional().describe("Shift the layer by this many frames (negative = earlier)"),
@@ -500,7 +501,7 @@ server.tool(
   {
     width: z.number().int().positive().optional().describe("Composition width in px"),
     height: z.number().int().positive().optional().describe("Composition height in px"),
-    fps: z.number().positive().optional().describe("Frame rate"),
+    fps: z.number().positive().optional().describe("Composition playback/frame rate in frames per second"),
     inFrame: z.number().optional().describe("First frame of the range"),
     outFrame: z.number().optional().describe("Last frame of the range"),
   },
@@ -638,7 +639,7 @@ server.tool(
         ],
       };
     } finally {
-      fs.rmSync(workdir, { recursive: true, force: true });
+      removeTreeSync(workdir);
     }
   },
 );
@@ -722,7 +723,7 @@ server.tool(
   "cavalry_list_attributes",
   "List every attribute path on a layer (api.getAttributes) — the dictionary that turns attribute guessing into one lookup. Set definitions:true to also fetch each attribute's definition (capped at 200 attributes).",
   {
-    layerId: z.string().describe("The layer ID"),
+    layerId: z.string().describe("The layer ID returned by create_layer, cavalry_batch, or a scene inspection"),
     definitions: z.boolean().optional().describe("Include per-attribute definitions (default false)"),
   },
   async ({ layerId, definitions }) => {
@@ -748,7 +749,7 @@ server.tool(
   "cavalry_get_bounding_box",
   "Get the bounding box of a layer: {x, y, width, height, centre:{x,y}, left, right, top, bottom}. The layer's world position = position + local centre, so to centre a layer at the composition centre set position = -centre (local space).",
   {
-    layerId: z.string().describe("The layer ID"),
+    layerId: z.string().describe("The layer ID returned by create_layer, cavalry_batch, or a scene inspection"),
     worldSpace: z.boolean().optional().describe("true = world space (includes position), false = local space (default)"),
   },
   async ({ layerId, worldSpace }) =>
@@ -822,7 +823,7 @@ server.tool(
   "cavalry_add_dynamic_attribute",
   `Add a dynamic attribute to a layer. Types: "int", "double", "bool", "string", "color", "int2d", "double2d", "position2d".`,
   {
-    layerId: z.string().describe("The layer ID"),
+    layerId: z.string().describe("The layer ID returned by create_layer, cavalry_batch, or a scene inspection"),
     attrName: z.string().describe("Name for the new attribute"),
     attrType: z.string().describe('Type of attribute: "int", "double", "bool", "string", "color", "int2d", "double2d", "position2d"'),
   },
@@ -885,8 +886,8 @@ server.tool(
 - setVelocity: per-keyframe velocity/spacing — spec: {"position.x": {frame: 30, leftSpeed, rightSpeed, leftInfluence, rightInfluence}}
 - clearVelocity: reset the four speed/influence fields — spec: {"position.x": {frame: 30}}`,
   {
-    action: z.enum(["delete", "deleteAnimation", "setVelocity", "clearVelocity"]),
-    layerId: z.string().describe("The layer ID"),
+    action: z.enum(["delete", "deleteAnimation", "setVelocity", "clearVelocity"]).describe("What to do to the keyframes of one attribute"),
+    layerId: z.string().describe("The layer ID returned by create_layer, cavalry_batch, or a scene inspection"),
     attrPath: z.string().optional().describe("Attribute path (required for delete/setVelocity/clearVelocity; optional for deleteAnimation)"),
     frames: z.array(z.number()).optional().describe("Frames of the keyframes to delete (action: delete)"),
     spec: z.record(z.string(), z.unknown()).optional().describe("Per-attribute keyframe dictionary (actions: setVelocity / clearVelocity)"),
@@ -933,7 +934,7 @@ server.tool(
   "cavalry_get_connections",
   "Read the connection graph around a layer in one call: every attribute that has an incoming connection (with its source), and every outgoing connection for every attribute plus the main output (\"id\"). Use it to see how effects/modifiers are wired before rewiring with cavalry_connect.",
   {
-    layerId: z.string().describe("The layer ID"),
+    layerId: z.string().describe("The layer ID returned by create_layer, cavalry_batch, or a scene inspection"),
   },
   async ({ layerId }) => {
     const code = `(function () {
@@ -960,8 +961,8 @@ server.tool(
   "cavalry_expression",
   `Set or read a JavaScript expression on an attribute (Cavalry evaluates it every frame). action "get" returns {has, expression}; action "set" applies the code — write it exactly as in Cavalry's expression field, e.g. "value * 2" or "[sin(time), 0]".`,
   {
-    action: z.enum(["set", "get"]),
-    layerId: z.string().describe("The layer ID"),
+    action: z.enum(["set", "get"]).describe("Whether to write a JavaScript expression or read the current one"),
+    layerId: z.string().describe("The layer ID returned by create_layer, cavalry_batch, or a scene inspection"),
     attrPath: z.string().describe("The attribute path, e.g. \"position.x\""),
     expression: z.string().optional().describe("Expression code (action: set). Use \"\" to clear."),
   },
@@ -987,7 +988,7 @@ server.tool(
   "cavalry_gradient",
   'Set a gradient attribute from a list of hex colors in one call (api.setGradientFromColors), e.g. colors ["#ffffff", "#4ffd7a", "#ff24e0"] on a linearGradient layer\'s "generator.gradient" or a gradientShader\'s "generator.gradient".',
   {
-    layerId: z.string().describe("The layer ID"),
+    layerId: z.string().describe("The layer ID returned by create_layer, cavalry_batch, or a scene inspection"),
     attrPath: z.string().describe('Gradient attribute path, e.g. "generator.gradient"'),
     colors: z.array(z.string()).min(2).describe("Hex color stops, in order (at least 2)"),
   },
@@ -1007,7 +1008,7 @@ server.tool(
   {
     baseColor: z.string().describe('Base color as hex, e.g. "#3366ff"'),
     count: z.number().int().min(2).max(16).describe("How many colors to generate"),
-    type: z.enum(["monochromatic", "analogous", "complementary", "splitComplementary", "triadic", "square", "rectangular", "circular", "goldenRatio"]),
+    type: z.enum(["monochromatic", "analogous", "complementary", "splitComplementary", "triadic", "square", "rectangular", "circular", "goldenRatio"]).describe("Color harmony rule used to derive the palette"),
   },
   async ({ baseColor, count, type }) =>
     runCode("", `__result = api.generateHarmoniousPalette(${jsString(baseColor)}, ${count}, ${jsString(type)});`),
@@ -1026,7 +1027,7 @@ server.tool(
 - preCompose: move the given layers (or the current selection when layerIds is omitted) into a new comp and reference it back in → returns the comp reference layer id
 - new: start a NEW EMPTY SCENE (destructive — requires confirm: true)`,
   {
-    action: z.enum(["list", "create", "setActive", "layers", "preCompose", "new"]),
+    action: z.enum(["list", "create", "setActive", "layers", "preCompose", "new"]).describe("Composition operation to perform"),
     name: z.string().optional().describe("Comp name (actions: create, preCompose)"),
     compId: z.string().optional().describe("Comp id (actions: setActive, layers)"),
     type: z.string().optional().describe('Filter layers by layer type, e.g. "textShape" (action: layers)'),
@@ -1095,8 +1096,8 @@ server.tool(
   "cavalry_transform",
   `Layer transform utilities. Actions: reset (back to defaults, clears frozen transforms), freeze (bake current transform into the shape), centrePivot (move the pivot to the layer's bounding box centre, or its centroid with doCentroid: true).`,
   {
-    action: z.enum(["reset", "freeze", "centrePivot"]),
-    layerId: z.string().describe("The layer ID"),
+    action: z.enum(["reset", "freeze", "centrePivot"]).describe("Transform utility to apply to the layer"),
+    layerId: z.string().describe("The layer ID returned by create_layer, cavalry_batch, or a scene inspection"),
     doCentroid: z.boolean().optional().describe("Centre on the centroid instead of the bounding box (action: centrePivot, default false)"),
   },
   async ({ action, layerId, doCentroid }) => {
@@ -1133,7 +1134,7 @@ server.tool(
   "cavalry_playback",
   "Play or stop timeline playback in the Cavalry viewport (api.play / api.stop). Useful to let the user watch an animation after building it.",
   {
-    action: z.enum(["play", "stop"]),
+    action: z.enum(["play", "stop"]).describe("Start or stop timeline playback in the viewport"),
   },
   async ({ action }) =>
     runCode("", action === "play" ? `api.play(); __result = "playing";` : `api.stop(); __result = "stopped";`),

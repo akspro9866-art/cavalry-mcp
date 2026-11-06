@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import fs from "node:fs";
-import { compilePreset, hasPreset, listPresets } from "../dist/presets/cavalry_snippets.js";
+import { compilePreset, hasPreset, listPresets, presetRig } from "../dist/presets/cavalry_snippets.js";
 import { executeMotionScript } from "../dist/runtime/execute.js";
 import { compileInspection } from "../dist/runtime/inspect.js";
 import { formatExecutionState } from "../dist/state.js";
@@ -10,7 +10,7 @@ import { runVerifyFrames } from "../dist/verify.js";
 import { runRenderFrames, formatRenderSummary } from "../dist/render-frames.js";
 import { runProbe } from "../dist/probe.js";
 
-const usage = `stallion -e "<javascript>" | -f <script.js> | -p <preset> '<json>' | --list [category] | --sel
+const usage = `stallion -e "<javascript>" | -f <script.js> | -p <preset> '<json>' | --list [category] | --rig <preset> | --sel
          --audio-beats <audio|beats.json> [--fps N] [--beats-out <file>] [--ffmpeg <path>]
          --render-promo <plan.json> [--out <mp4>] [--audio <track>] [--workdir <dir>] [--dry-run]
          --verify-frames <f1,f2,f3|f1-f3:step> [--out <dir>] [--scale N] [--comp <id>]
@@ -206,6 +206,11 @@ try {
           .join(" ");
         console.log(`${preset.id.padEnd(idWidth)}${preset.title.padEnd(30)}[${preset.category}]  ${params}`);
       }
+    } else if (args[0] === "--rig") {
+      if (!args[1]) throw new Error("--rig requires a preset id");
+      const contract = presetRig(args[1]);
+      if (!contract) throw new Error(`Unknown preset: ${args[1]}`);
+      console.log(JSON.stringify({ id: args[1], ...contract }, null, 2));
     } else if (args[0] === "--sel") {
       code = compileInspection("selection");
       helpers = false;

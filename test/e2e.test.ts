@@ -12,6 +12,7 @@ import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { startMockStallion } from "./helpers/mockStallion.js";
+import { removeTreeSync } from "../src/fs-safe.js";
 
 const mock = await startMockStallion();
 const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "cav-e2e-"));
@@ -27,7 +28,7 @@ await client.connect(clientToServer);
 
 test.after(async () => {
   await mock.close();
-  fs.rmSync(workdir, { recursive: true, force: true });
+  removeTreeSync(workdir);
 });
 
 interface ToolResult {

@@ -12,6 +12,7 @@ import {
   readBeatFile,
   analyzeAudioFile,
 } from "../src/beats.js";
+import { removeTreeSync } from "../src/fs-safe.js";
 
 function pcmClickTrack(opts: { durationSeconds: number; intervalSeconds: number; sampleRate?: number }): Buffer {
   const sampleRate = opts.sampleRate ?? 16000;
@@ -122,7 +123,7 @@ test("beats: JSON and text files load without Cavalry or ffmpeg", async () => {
     assert.deepEqual(text.frames, [0, 12, 24]);
     assert.equal(text.source, "text");
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeTreeSync(dir);
   }
 });
 
@@ -139,6 +140,6 @@ test("beats: ffmpeg decodes a WAV click track", { skip: hasFfmpeg ? false : "ffm
     assert.equal(analysis.bpm, 120);
     assert.ok((analysis.durationSeconds ?? 0) >= 3.9);
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeTreeSync(dir);
   }
 });

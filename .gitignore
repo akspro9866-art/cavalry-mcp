@@ -2,3 +2,5 @@ node_modules/
 dist/
 *.log
 .env
+# Scratch output from live bridge probes (capabilities dumps, rendered frames).
+tmp-live-*

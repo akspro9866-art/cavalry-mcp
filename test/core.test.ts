@@ -7,6 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { startMockStallion } from "./helpers/mockStallion.js";
 import { INSPECT_MAX_CHARS } from "../src/runtime/inspect.js";
+import { removeTreeSync } from "../src/fs-safe.js";
 
 const mock = await startMockStallion({ native: true });
 const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "cav-core-"));
@@ -22,7 +23,7 @@ test.after(async () => {
   await client.close();
   await server.close();
   await mock.close();
-  fs.rmSync(workdir, { recursive: true, force: true });
+  removeTreeSync(workdir);
 });
 
 interface ToolResult { isError?: boolean; content: Array<{ type: string; text?: string }> }
@@ -37,6 +38,7 @@ test("default MCP surface is the compact promoted tool set", async () => {
   const listed = await client.listTools();
   assert.deepEqual(listed.tools.map(tool => tool.name).sort(), [
     "cavalry_batch",
+    "cavalry_doctor",
     "cavalry_inspect",
     "cavalry_probe_api",
     "cavalry_render_frames",

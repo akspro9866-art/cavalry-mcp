@@ -344,10 +344,14 @@ export function buildMockApi(state, hooks = {}) {
     },
     getKeyframeTimes(id, attr) {
       layerOf(state, id);
-      return state.keyframes
-        .filter((k) => k.layerId === id && attr in k.attributes)
-        .map((k) => k.frame)
-        .sort((a, b) => a - b);
+      // One time per keyframe: re-keying a frame that already has a key replaces
+      // its value rather than adding a second key there, so the readback is a set
+      // of frames even though state.keyframes keeps every write for assertions.
+      return [...new Set(
+        state.keyframes
+          .filter((k) => k.layerId === id && attr in k.attributes)
+          .map((k) => k.frame),
+      )].sort((a, b) => a - b);
     },
     keyframe(id, frame, attributes) {
       layerOf(state, id);

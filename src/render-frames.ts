@@ -14,7 +14,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { executeMotionScript, type ScriptOutcome } from "./runtime/execute.js";
-import { NO_RESULT_MESSAGE } from "./lib.js";
+import { NO_RESULT_MESSAGE, toSceneUri } from "./lib.js";
 import { getConfig, type StallionConfig } from "./stallion.js";
 import { defaultPreviewDir, parseFrameList } from "./verify.js";
 
@@ -134,14 +134,22 @@ function patternWidth(pattern: string): number | null {
   return token[1] ? Number(token[1]) : 0;
 }
 
-/** The file Cavalry will write: it appends `.png` when the path has no extension. */
+/**
+ * The file Cavalry will write: it appends `.png` when the path has no extension.
+ *
+ * `base` is the **scene URI** — the value that crosses the Stallion bridge
+ * inside a JSON payload, so it is always forward-slash and therefore byte-stable
+ * between a Windows and a Linux runner. `file` is the **disk path** the local
+ * `fs` stats afterwards, and keeps native separators. They name the same file;
+ * do not substitute one for the other.
+ */
 export function frameTarget(outDir: string, pattern: string, frame: number): { base: string; file: string } {
   const width = patternWidth(pattern);
   const name = width === null
     ? `${pattern.replace(/[/\\]/g, "")}_${padFrame(frame, 6)}`
     : pattern.replace(/%0?\d*d/, padFrame(frame, width));
-  const base = path.join(outDir, name).replace(/\.[Pp][Nn][Gg]$/, "");
-  return { base, file: `${base}.png` };
+  const nativeBase = path.join(outDir, name).replace(/\.[Pp][Nn][Gg]$/, "");
+  return { base: toSceneUri(nativeBase), file: `${nativeBase}.png` };
 }
 
 /**

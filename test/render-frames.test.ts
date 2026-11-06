@@ -7,7 +7,7 @@ import vm from "node:vm";
 import { buildMockApi, createMockApiState } from "./mock-cavalry-api.js";
 import type { MockApi } from "./mock-cavalry-api.js";
 import { wrapAtomicScript } from "../src/runtime/atomic.js";
-import { NO_RESULT_MESSAGE } from "../src/lib.js";
+import { NO_RESULT_MESSAGE, toSceneUri } from "../src/lib.js";
 import type { ScriptOutcome } from "../src/runtime/execute.js";
 import {
   buildRenderChunkScript,
@@ -21,9 +21,10 @@ import {
   runRenderFrames,
   type NormalizedRenderFrames,
 } from "../src/render-frames.js";
+import { removeTreeSync } from "../src/fs-safe.js";
 
 const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "cav-render-"));
-test.after(() => fs.rmSync(workdir, { recursive: true, force: true }));
+test.after(() => removeTreeSync(workdir));
 
 function dir(tag: string): string {
   return path.join(workdir, tag);
@@ -115,8 +116,11 @@ test("render: frame lists, patterns and file targets normalise safely", () => {
   assert.equal(normalized.progressFile, path.join(outDir, "render-progress.json"));
 
   // A pattern with no token still yields padded, in-directory names.
-  assert.equal(frameTarget(outDir, "f-%06d", 7).base, path.join(outDir, "f-000007"));
+  // `base` is the scene URI (always forward-slash); `file` is the local disk
+  // path (native separators). Same file, two forms — see frameTarget's doc.
+  assert.equal(frameTarget(outDir, "f-%06d", 7).base, toSceneUri(path.join(outDir, "f-000007")));
   assert.equal(frameTarget(outDir, "f-%06d", 7).file, path.join(outDir, "f-000007.png"));
+  assert.doesNotMatch(frameTarget(outDir, "f-%06d", 7).base, /\\/);
   // Cavalry appends .png itself, so a pattern that already says so must not double it.
   assert.equal(frameTarget(outDir, "frame-%06d.png", 1).file, path.join(outDir, "frame-000001.png"));
   assert.equal(normalizeRenderFrames({ frames: [0], outDir, pattern: "a/b/name" }).pattern, "abname-%06d");

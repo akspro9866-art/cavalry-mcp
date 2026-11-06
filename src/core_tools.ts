@@ -1,8 +1,8 @@
 /**
- * The core tool surface: the four calls that cover most scene work — build a
- * batch of operations, verify a handful of frames, render a sequence, and ask
- * the live build what it exposes. Everything here is atomic (one Undo group)
- * and returns a bounded summary rather than a scene dump.
+ * The core tool surface: the calls that cover most scene work — build a batch of
+ * operations, verify a handful of frames, render a sequence, ask the live build what
+ * it exposes, and diagnose the stack when something will not connect. Everything here
+ * is atomic (one Undo group) and returns a bounded summary rather than a scene dump.
  *
  * `ENABLE_LEGACY_TOOLS` still adds the original granular one-attribute-at-a-time
  * tools; nothing in this file depends on them.
@@ -10,6 +10,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { compileBatch, type BatchOp } from "./batch.js";
+import { runDoctor, formatDoctorReport } from "./doctor.js";
 import { EASING_LIST } from "./lib.js";
 import {
   formatRenderSummary,
@@ -225,6 +226,33 @@ Example: [{"op":"create","layerType":"basicShape","name":"BG","as":"bg"},{"op":"
         return jsonResult(result);
       } catch (err) {
         return textResult(`API probe failed: ${message(err)}`, true);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // cavalry_doctor — is the stack actually up?
+  // -------------------------------------------------------------------------
+  server.tool(
+    "cavalry_doctor",
+    "Diagnose the stack in one call: Stallion bridge connectivity and latency, whether the Cavalry runtime can execute a script, and whether ffmpeg/ffprobe are available. Read-only; it never edits or renders a scene.",
+    {
+      timeoutMs: z.number().int().min(250).max(60000).optional().describe("Per-probe ceiling in ms (default 4000). Raise it while Cavalry is mid-render rather than treating a slow answer as a failure."),
+      probeRuntime: z.boolean().optional().describe("Run the api.exec round trip that proves the script host is awake (default true). Set false for a network-and-binaries-only check."),
+      expectedVersion: z.string().optional().describe('Cavalry minor to compare against, e.g. "2.8" (default CAVALRY_EXPECTED_VERSION, else 2.8).'),
+      format: z.enum(["text", "json"]).optional().describe('"text" for one line per check with fixes, "json" for the structured report (default text).'),
+    },
+    async args => {
+      try {
+        const report = await runDoctor({
+          timeoutMs: args.timeoutMs,
+          probeRuntime: args.probeRuntime,
+          expectedVersion: args.expectedVersion,
+        });
+        if (args.format === "json") return jsonResult(report, !report.ok);
+        return textResult(formatDoctorReport(report), !report.ok);
+      } catch (err) {
+        return textResult(`Doctor run failed: ${message(err)}`, true);
       }
     },
   );

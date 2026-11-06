@@ -11,6 +11,7 @@ import { startMockStallion } from "./helpers/mockStallion.js";
 import type { StallionConfig } from "../src/stallion.js";
 import { readExecutionState, formatExecutionState } from "../src/state.js";
 import { parseOutcome } from "../src/lib.js";
+import { removeTreeSync } from "../src/fs-safe.js";
 
 const exec = promisify(execFile);
 const mock = await startMockStallion({ native: true });
@@ -43,7 +44,7 @@ test.after(async () => {
   await client.close();
   await server.close();
   await mock.close();
-  fs.rmSync(workdir, { recursive: true, force: true });
+  removeTreeSync(workdir);
 });
 
 interface ToolResult {

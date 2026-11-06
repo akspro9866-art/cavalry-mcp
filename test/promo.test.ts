@@ -13,6 +13,7 @@ import {
   buildPromoCommands,
   runPromo,
 } from "../src/promo.js";
+import { removeTreeSync } from "../src/fs-safe.js";
 
 function mockExecutor(mock: Awaited<ReturnType<typeof startMockStallion>>, statePath: string) {
   return async (code: string): Promise<ScriptOutcome> => {
@@ -81,7 +82,7 @@ test("promo: script renders every sampled frame and returns a manifest", async (
     assert.ok(mock.state.order.includes("setFrame:4"));
   } finally {
     await mock.close();
-    fs.rmSync(workDir, { recursive: true, force: true });
+    removeTreeSync(workDir);
   }
 });
 
@@ -121,7 +122,7 @@ test("promo: runPromo encodes scenes, concatenates and renames the master", asyn
     assert.equal(result.scenes[1].firstFrame, 10);
   } finally {
     await mock.close();
-    fs.rmSync(workDir, { recursive: true, force: true });
+    removeTreeSync(workDir);
   }
 });
 
@@ -146,7 +147,7 @@ test("promo: dry-run predicts frames and commands without touching Cavalry", asy
     for (const entry of result.rendered) assert.equal(fs.existsSync(entry.file), false);
     assert.match(result.commands[0].args.join(" "), /scale=128:720/);
   } finally {
-    fs.rmSync(workDir, { recursive: true, force: true });
+    removeTreeSync(workDir);
   }
 });
 
@@ -178,7 +179,7 @@ test("promo: background audio adds a mux command and skips the rename", async ()
     assert.ok(fs.existsSync(result.out));
   } finally {
     await mock.close();
-    fs.rmSync(workDir, { recursive: true, force: true });
+    removeTreeSync(workDir);
   }
 });
 

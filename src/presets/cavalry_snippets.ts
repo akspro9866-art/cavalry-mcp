@@ -1,5 +1,6 @@
-import type { PresetDef, PresetParamDef } from "./types.js";
+import type { PresetDef, PresetParamDef, PresetRigTerms } from "./types.js";
 import { PRESET_CATEGORIES, presetDefaults } from "./types.js";
+import { derivePresetRig } from "../runtime/rig_terms.js";
 import { CAT01_TYPOGRAPHY } from "./packs/cat01_typography.js";
 import { CAT02_UI_MOCKUPS } from "./packs/cat02_ui_mockups.js";
 import { CAT03_DATA_VIZ } from "./packs/cat03_data_viz.js";
@@ -103,6 +104,13 @@ export interface PresetSummary {
   categoryLabel: string;
   description: string;
   params: Record<string, PresetParamDef>;
+  /**
+   * The rig this preset runs on, in the shared vocabulary: stiffness, damping
+   * (ratio and coefficient), overshoot, staggerOffset, holdFrames plus the
+   * easings its script can reach and which parameter tunes which term. Derived
+   * from the preset's own declaration, so it cannot drift from the code.
+   */
+  rig: PresetRigTerms;
 }
 
 /**
@@ -128,7 +136,14 @@ export function listPresets(category?: string): PresetSummary[] {
     categoryLabel: PRESET_CATEGORIES.find(cat => cat.id === def.category)?.label ?? def.category,
     description: def.description,
     params: def.params,
+    rig: derivePresetRig(def),
   }));
+}
+
+/** The rig contract of one preset, in the shared vocabulary. Unknown ids give null. */
+export function presetRig(name: string): PresetRigTerms | null {
+  const def = getPreset(name);
+  return def ? derivePresetRig(def) : null;
 }
 
 export { PRESET_CATEGORIES };

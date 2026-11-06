@@ -40,8 +40,79 @@ const _mg = {
     }
     return _mg.layer("textShape", String(str).slice(0, 40) || "Text", attrs);
   },
-  wire(srcId, srcAttr, dstId, dstAttr) {
-    return api.connect(srcId, srcAttr, dstId, dstAttr);
+  /**
+   * Evaluated inputs of one attribute as "sourceId.sourceAttr" strings.
+   * Cavalry 2.8 returns a single string from api.getInConnection and uses "" for
+   * "nothing drives this"; some builds answer with a list. Normalising both here
+   * keeps every idempotency check on one read path.
+   */
+  __inConnections(dstId, dstAttr) {
+    let raw = null;
+    try { raw = api.getInConnection(dstId, dstAttr); } catch (e) { return []; }
+    if (raw == null || raw === "") return [];
+    const list = Array.isArray(raw) ? raw : [raw];
+    const out = [];
+    for (let i = 0; i < list.length; i++) {
+      const value = list[i];
+      if (value == null || value === "") continue;
+      out.push(String(typeof value === "object" ? (value.id != null ? value.id + "." + (value.attr != null ? value.attr : "") : value.srcId || "") : value));
+    }
+    return out;
+  },
+
+  /** Layer type of an id, or "" when this build cannot answer. */
+  __layerType(id) {
+    if (id == null || id === "") return "";
+    try { return String(api.getLayerType(id) || ""); } catch (e) { return ""; }
+  },
+
+  /** First modifier node of nodeType already driving attr on target, or null. */
+  __findModifier(target, attr, nodeType) {
+    const inputs = this.__inConnections(target, attr);
+    for (let i = 0; i < inputs.length; i++) {
+      const id = String(inputs[i]).split(".")[0];
+      if (this.__layerType(id) === nodeType) return id;
+    }
+    return null;
+  },
+
+  /**
+   * Idempotent connect. api.connect appends an input every time it is called, so
+   * re-running a rig doubled its deformer, stagger or filter stack. The wire is
+   * read back first: an attribute already driven by "srcId.srcAttr" is left
+   * alone and reported as skipped.
+   *
+   *   wire(srcId, srcAttr, dstId, dstAttr)            // original positional form
+   *   wire({ from, fromAttr, to, toAttr, force?, exclusive? })
+   *
+   * force re-wires over an existing input (passed as api.connect's fifth
+   * argument, the same convention cavalry_batch uses). exclusive is opt-in and
+   * refuses to add a second source where one already drives the attribute — the
+   * default stays permissive because "deformers" and "filters" legitimately
+   * carry several inputs.
+   */
+  wire(srcId, srcAttr, dstId, dstAttr, opts) {
+    let from = srcId, fromAttr = srcAttr, to = dstId, toAttr = dstAttr;
+    if (srcId && typeof srcId === "object") {
+      const spec = srcId;
+      from = spec.from != null ? spec.from : spec.srcId;
+      fromAttr = spec.fromAttr != null ? spec.fromAttr : spec.srcAttr;
+      to = spec.to != null ? spec.to : spec.dstId;
+      toAttr = spec.toAttr != null ? spec.toAttr : spec.dstAttr;
+      opts = spec;
+    }
+    opts = opts || {};
+    const source = String(from) + "." + String(fromAttr);
+    const sink = String(to) + "." + String(toAttr);
+    const existing = this.__inConnections(to, toAttr);
+    if (existing.indexOf(source) >= 0) {
+      return { wired: false, skipped: "already-wired", source: source, target: sink, existing: existing };
+    }
+    if (opts.exclusive && existing.length && !opts.force) {
+      throw new Error("_mg.wire: " + sink + " is already driven by " + existing[0] + "; pass force to replace it");
+    }
+    const result = opts.force ? api.connect(from, fromAttr, to, toAttr, true) : api.connect(from, fromAttr, to, toAttr);
+    return { wired: true, source: source, target: sink, replaced: existing.slice(), result: result };
   },
   deform(targetId, deformerType, name, attrs = {}) {
     const id = _mg.layer(deformerType, name, attrs);
@@ -202,13 +273,73 @@ const _mg = {
   },
 
   /**
+   * Rig-vocabulary normalizer. A refinement loop (refclone's Stage 4) speaks in
+   * spring terms — stiffness, damping, overshoot, holdFrames, staggerOffset —
+   * while Cavalry 2.8 only exposes magic easings, keyframes and the oscillator /
+   * stagger / falloff nodes. This maps one onto the other with the textbook
+   * second-order model, in frames:
+   *
+   *   omega0 = sqrt(stiffness / mass)                 rad per frame
+   *   zeta   = dampingRatio, or coefficient/(2·sqrt(k·m)), or derived from the
+   *            requested overshoot through Os = e^(-zeta·pi / sqrt(1 - zeta^2))
+   *   x(t)   = rest + amplitude · e^(-zeta·omega0·t) · cos(omega_d·t)
+   *
+   * cycles and decay are the same curve expressed across a window of
+   * durationFrames, which is what modulate's sampler and api.magicEasing need.
+   * Returns the descriptor only — it writes nothing, so it is safe to call from a
+   * validator before any scene mutation.
+   */
+  rig(spec) {
+    spec = spec || {};
+    const num = function (value, fallback) { const n = Number(value); return isFinite(n) ? n : fallback; };
+    const mass = Math.max(num(spec.mass, 1), 1e-6);
+    const stiffness = Math.max(num(spec.stiffness, 100), 1e-6);
+    const omega0 = Math.sqrt(stiffness / mass);
+    let zeta = null;
+    if (spec.dampingRatio != null) zeta = num(spec.dampingRatio, 0.5);
+    else if (spec.damping != null) {
+      const d = num(spec.damping, 0);
+      // Values at or below 1 read as a damping ratio (the usual convention for
+      // this knob); anything larger is a coefficient in force per frame.
+      zeta = d <= 1 ? d : d / (2 * Math.sqrt(stiffness * mass));
+    }
+    let overshoot = spec.overshoot != null ? num(spec.overshoot, 0) : null;
+    if (overshoot != null && overshoot > 0 && zeta == null) {
+      const os = Math.min(Math.max(overshoot > 1 ? overshoot / 100 : overshoot, 1e-6), 0.999);
+      const l = Math.log(os);
+      zeta = -l / Math.sqrt(Math.PI * Math.PI + l * l);
+    }
+    if (zeta == null) zeta = 0.5;
+    zeta = Math.max(0, Math.min(1.5, zeta));
+    const omegaD = zeta < 1 ? omega0 * Math.sqrt(1 - zeta * zeta) : 0;
+    const impliedOvershoot = zeta < 1 ? Math.exp((-zeta * Math.PI) / Math.sqrt(1 - zeta * zeta)) : 0;
+    return {
+      mass: mass,
+      stiffness: stiffness,
+      dampingRatio: Math.round(zeta * 10000) / 10000,
+      dampingCoefficient: Math.round(2 * zeta * omega0 * mass * 10000) / 10000,
+      angularFrequency: Math.round(omega0 * 10000) / 10000,
+      dampedFrequency: Math.round(omegaD * 10000) / 10000,
+      cyclesPerFrame: Math.round((omegaD / (2 * Math.PI)) * 10000) / 10000,
+      overshoot: Math.round(impliedOvershoot * 1000) / 1000,
+      underdamped: zeta < 1,
+      holdFrames: Math.max(0, Math.round(num(spec.holdFrames, 0))),
+      staggerOffset: Math.max(1, Math.round(num(spec.staggerOffset != null ? spec.staggerOffset : spec.stagger, 4))),
+      /** Magic-easing name that best matches this descriptor, from the accepted set. */
+      easing: zeta >= 1 ? "SlowOut" : (impliedOvershoot >= 0.2 ? "OvershootOut" : "SpringOut")
+    };
+  },
+
+  /**
    * Two boundary keyframes plus a supported magic-easing curve.
    *
-   * spec = { inFrame, outFrame, from, to, magicEasing?, easing?, bezier? }
+   * spec = { inFrame, outFrame, from, to, magicEasing?, easing?, bezier?,
+   *          holdFrames?, stiffness?, damping?, overshoot? }
    *   easing: { kind: "preset", name } or { kind: "bezier", handles }
    * A cubic-bezier without a matching preset resolves to the nearest accepted
-   * Cavalry curve; "Custom" is never sent to api.magicEasing.
-   * attr may be "position" or "scale" to drive both axes.
+   * Cavalry curve; "Custom" is never sent to api.magicEasing. holdFrames delays
+   * the move; a rig name without an explicit easing is chosen from the spring
+   * descriptor. attr may be "position" or "scale" to drive both axes.
    */
   ease(id, attr, spec) {
     spec = spec || {};
@@ -220,15 +351,23 @@ const _mg = {
     const from = Number(spec.from);
     const to = Number(spec.to);
     if (!isFinite(from) || !isFinite(to)) throw new Error("_mg.ease requires finite from and to values");
+    // holdFrames keeps the layer still before the move starts, so a stagger or a
+    // beat offset is expressed in the timing rather than in the curve.
+    const hold = Math.max(0, Math.round(Number(spec.holdFrames != null ? spec.holdFrames
+      : (spec.easing && spec.easing.holdFrames != null ? spec.easing.holdFrames : (spec.rig && spec.rig.holdFrames) || 0))));
+    const start = inFrame + hold;
+    if (start === outFrame) throw new Error("_mg.ease: holdFrames moved the start onto outFrame");
     const easing = spec.easing || null;
     let name = spec.magicEasing || (easing && easing.kind === "preset" ? easing.name : null);
     const handles = spec.bezier || (easing && easing.kind === "bezier" ? easing.handles : null);
-    const resolved = name ? this.__easeName(name) : this.__nearestEase(handles);
+    const rigSpec = spec.rig || (name == null && handles == null
+      && (spec.stiffness != null || spec.damping != null || spec.overshoot != null) ? spec : null);
+    const resolved = name ? this.__easeName(name) : (rigSpec ? this.rig(rigSpec).easing : this.__nearestEase(handles));
     const attrs = attr === "position" || attr === "scale" ? [attr + ".x", attr + ".y"] : [attr];
     for (let i = 0; i < attrs.length; i++) {
-      _rb.kf(id, attrs[i], [[inFrame, from], [outFrame, to]], resolved);
+      _rb.kf(id, attrs[i], [[start, from], [outFrame, to]], resolved);
     }
-    return { id: id, attrs: attrs, easing: resolved, inFrame: inFrame, outFrame: outFrame };
+    return { id: id, attrs: attrs, easing: resolved, inFrame: start, outFrame: outFrame, holdFrames: hold };
   },
 
   /**
@@ -248,7 +387,8 @@ const _mg = {
     }
     if (list.length < 2) throw new Error("_mg.stagger needs at least two member layers");
     if (!spec.attr) throw new Error("_mg.stagger requires an attr (for example position.y)");
-    const delay = Math.round(Number(spec.delayFrames == null ? 4 : spec.delayFrames));
+    const requested = spec.delayFrames != null ? spec.delayFrames : spec.staggerOffset;
+    const delay = Math.round(Number(requested == null ? 4 : requested));
     if (!(delay >= 1)) throw new Error("_mg.stagger delayFrames must be at least 1");
     const inFrame = Math.round(Number(spec.inFrame));
     const outFrame = Math.round(Number(spec.outFrame));
@@ -262,34 +402,66 @@ const _mg = {
       });
       applied.push({ id: list[i], inFrame: inFrame + offset, outFrame: outFrame + offset });
     }
-    return { ids: list, attr: spec.attr, delayFrames: delay, applied: applied };
+    return { ids: list, attr: spec.attr, delayFrames: delay, staggerOffset: delay, applied: applied };
   },
 
   /**
-   * In-place delta / absolute adjustment for existing layer ids. Never creates,
+   * In-place delta / absolute adjustment for existing layers. Never creates,
    * duplicates or recreates layers, so the composition and playhead are kept.
    *
    * spec = {
-   *   target?: "<layerId>", ids?: string[],
+   *   target?: "<layerId>" | "<semanticId>", ids?: string[],
+   *   semantic?: "<semanticId>" | "<slug>", semantics?: string[],
    *   attrs?: { "position.x": 120 }, delta?: { "position.x": 4 },
-   *   frame?: 42, shiftKeyframes?, easing?
+   *   frame?: 42, shiftKeyframes?, easing?, force?, diff?
    * }
    * With frame, values are written through api.keyframe at that frame so an
    * animated attribute is corrected where the render failed, not at the playhead.
+   * Static writes are compared against the evaluated attribute first: a layer that
+   * already holds the requested value is reported under skipped and not written,
+   * so re-applying the same spec is a no-op instead of a second pass of identical
+   * keyframes. A frame-targeted write always lands, because Cavalry 2.8 has no
+   * value-at-frame getter to compare against. diff:false or force:true writes
+   * regardless; every target is reported so the caller can see what it addressed.
    */
   patch(spec) {
     const list = Array.isArray(spec) ? spec : [spec];
     const results = [];
+    let index = null;
+    const scene = () => { if (!index) index = this.__semanticIndex(); return index; };
     for (let i = 0; i < list.length; i++) {
       const entry = list[i] || {};
+      const queries = [].concat(entry.semantics || [], entry.semantic != null ? [entry.semantic] : []);
+      const resolved = [];
+      for (let q = 0; q < queries.length; q++) {
+        const hits = this.find(queries[q], scene());
+        if (!hits.length) throw new Error("_mg.patch: no layer in the active comp matches " + queries[q]);
+        for (let h = 0; h < hits.length; h++) if (resolved.indexOf(hits[h]) < 0) resolved.push(hits[h]);
+      }
       let targets;
       if (Array.isArray(entry.ids) && entry.ids.length) targets = entry.ids.slice();
-      else if (entry.target != null) targets = [String(entry.target)];
-      else targets = this.__patchTargets(entry);
+      else if (entry.target != null) {
+        const literal = String(entry.target);
+        // "type#n" is a layer id, so it never needs a comp walk (the same
+        // convention __patchTargets uses for explicit references).
+        if (literal.indexOf("#") >= 0) targets = [literal];
+        else {
+          const hits = this.find(literal, scene());
+          targets = hits.length ? hits : [literal];
+        }
+      } else targets = this.__patchTargets(entry);
+      if (resolved.length) {
+        const merged = targets.slice();
+        for (let r = 0; r < resolved.length; r++) if (merged.indexOf(resolved[r]) < 0) merged.push(resolved[r]);
+        targets = merged;
+      }
       const frame = entry.frame == null ? null : Math.round(Number(entry.frame));
       const changes = [];
+      const skipped = [];
+      const compare = entry.force !== true && entry.diff !== false && frame == null;
       for (let t = 0; t < targets.length; t++) {
         const id = targets[t];
+        const semanticId = index ? this.semantic(id, index) : null;
         const attrs = {};
         if (entry.attrs) {
           const keys = Object.keys(entry.attrs);
@@ -302,16 +474,28 @@ const _mg = {
             attrs[keys[k]] = (isFinite(current) ? current : 0) + Number(entry.delta[keys[k]] || 0);
           }
         }
-        if (Object.keys(attrs).length) {
-          if (frame != null && isFinite(frame)) this.patchKeyframeSafe(id, attrs, frame);
-          else this.set(id, attrs);
-          changes.push({ id: id, attrs: attrs, frame: frame });
+        const written = {};
+        const keys = Object.keys(attrs);
+        for (let k = 0; k < keys.length; k++) {
+          const key = keys[k];
+          if (compare && this.__sameValue(this.__readAttr(id, key), attrs[key])) {
+            skipped.push({ id: id, semantic: semanticId, attr: key, value: attrs[key], reason: "unchanged" });
+            continue;
+          }
+          written[key] = attrs[key];
+        }
+        if (Object.keys(written).length) {
+          if (frame != null && isFinite(frame)) this.patchKeyframeSafe(id, written, frame);
+          else this.set(id, written);
+          changes.push({ id: id, semantic: semanticId, attrs: written, frame: frame });
         }
         if (entry.shiftKeyframes != null || entry.easing != null) {
           this.patchSelected({ ids: [id], shiftKeyframes: entry.shiftKeyframes, easing: entry.easing });
         }
       }
-      results.push({ patched: changes.length, changes: changes });
+      const outcome = { patched: changes.length, changes: changes, skipped: skipped, targets: targets.slice() };
+      if (queries.length) outcome.semantics = queries.slice();
+      results.push(outcome);
     }
     return results.length === 1 ? results[0] : results;
   },
@@ -321,19 +505,32 @@ const _mg = {
    * or an inline path d (cavalry.Path + api.createEditable). Parent, position
    * and scale are applied to the created layer; the composition is untouched.
    *
-   * spec = { path?, d?, name?, pos?: {x,y}, scale? }
+   * spec = { path?, d?, name?, pos?: {x,y}, scale?,
+   *          viewBox?, center?, scaleTo?, flipY?, report? }
+   *
+   * The inline route normalises the geometry through __svgParse before it reaches
+   * Cavalry; the asset route hands the file to api.loadAsset, so the viewBox of an
+   * imported SVG is whatever the asset's own reader does with it — scale and
+   * position are still applied to the layer. report:true returns
+   * { id, subpaths, commands, unsupported, bounds, ... } next to the layer id for
+   * callers that need to check the artwork landed where they expected.
    */
   svg(parent, spec) {
     spec = spec || {};
     let id = null;
+    let meta = null;
     if (spec.path) {
       const asset = api.loadAsset(String(spec.path), false);
       id = api.addAssetToComp(asset);
+      meta = { route: "asset", normalized: false };
     } else if (spec.d != null) {
       if (typeof api.createEditable !== "function") {
         throw new Error("_mg.svg: this Cavalry build has no api.createEditable; pass spec.path so the verified SVG asset route can run");
       }
-      id = api.createEditable(this.__svgPath(spec.d), spec.name || "Vector");
+      const parsed = this.__svgParse(spec.d, spec);
+      meta = parsed.meta;
+      meta.route = "path";
+      id = api.createEditable(parsed.path, spec.name || "Vector");
     } else {
       throw new Error("_mg.svg requires spec.path or spec.d");
     }
@@ -347,11 +544,63 @@ const _mg = {
     }
     if (spec.pos) this.set(id, { position: { x: Number(spec.pos.x) || 0, y: Number(spec.pos.y) || 0 } });
     if (spec.scale != null) this.set(id, { scale: Number(spec.scale) || 1 });
+    if (spec.report) {
+      const outcome = { id: id };
+      const keys = Object.keys(meta);
+      for (let k = 0; k < keys.length; k++) outcome[keys[k]] = meta[keys[k]];
+      return outcome;
+    }
     return id;
   },
 
-  /** Parse the SVG path subset VTracer emits into a cavalry.Path. */
-  __svgPath(d) {
+  /** "minX minY w h" | {x,y,width,height} | [x,y,w,h] -> box or null. */
+  __viewBox(value) {
+    if (value == null || value === "") return null;
+    if (typeof value === "string") {
+      const parts = value.match(/-?\d*\.?\d+(?:[eE][-+]?\d+)?/g) || [];
+      if (parts.length < 4) return null;
+      return { x: Number(parts[0]), y: Number(parts[1]), width: Number(parts[2]), height: Number(parts[3]) };
+    }
+    if (Array.isArray(value) && value.length >= 4) {
+      return { x: Number(value[0]), y: Number(value[1]), width: Number(value[2]), height: Number(value[3]) };
+    }
+    if (typeof value === "object") {
+      const box = {
+        x: Number(value.x != null ? value.x : value.minX),
+        y: Number(value.y != null ? value.y : value.minY),
+        width: Number(value.width != null ? value.width : value.w),
+        height: Number(value.height != null ? value.height : value.h)
+      };
+      if (!(isFinite(box.x) && isFinite(box.y) && isFinite(box.width) && isFinite(box.height))) return null;
+      return box;
+    }
+    return null;
+  },
+
+  /**
+   * Parse the SVG path subset VTracer and friends emit into a cavalry.Path, with
+   * the normalisation vector art needs before it sits on a layer.
+   *
+   * opts = { viewBox?, center?, scaleTo?, flipY? }
+   *
+   *   viewBox  Cavalry anchors an editable at its own coordinate origin, so art
+   *            from an SVG whose viewBox does not start at 0,0 would otherwise sit
+   *            offset by that amount; the min corner is re-mapped to (0,0).
+   *   center   anchors the control bounds on the layer origin instead, which is
+   *            what a pivot-driven pop or rotation wants; it replaces the viewBox
+   *            shift.
+   *   scaleTo  fits the longest axis of the bounds to this many units.
+   *   flipY    mirrors y, for SVG art (y grows down) landing in a comp whose y
+   *            grows up. Opt-in, because which way is upright is the comp's call.
+   *
+   * Sub-paths are counted so compound shapes — counters, holes, multi-contour
+   * logos — are visible to the caller, and commands this parser cannot express
+   * (arcs, anything exotic) are reported under unsupported with their
+   * parameters skipped whole, instead of leaking numbers into the next command as
+   * stray line segments the way a silent drop used to.
+   */
+  __svgParse(d, opts) {
+    opts = opts || {};
     if (typeof cavalry === "undefined" || typeof cavalry.Path !== "function") {
       throw new Error("_mg.svg: new cavalry.Path() is unavailable in this build; pass a .svg asset path instead");
     }
@@ -363,58 +612,174 @@ const _mg = {
     let i = 0;
     let cmd = "M";
     let x = 0, y = 0, startX = 0, startY = 0;
-    const num = () => Number(tokens[i++]);
+    let lastCx = null, lastCy = null;
+    let subpaths = 0;
+    let skip = false;
+    const ops = [];
+    const unsupported = [];
+    const limits = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+    const num = () => { const value = Number(tokens[i]); i += 1; return isFinite(value) ? value : 0; };
+    const see = (px, py) => {
+      if (px < limits.minX) limits.minX = px;
+      if (px > limits.maxX) limits.maxX = px;
+      if (py < limits.minY) limits.minY = py;
+      if (py > limits.maxY) limits.maxY = py;
+    };
+    // Pass 1: resolve every command to absolute pen coordinates, so relative
+    // runs, implicit repeats and reflected handles are all in one place before
+    // any transform is applied.
     while (i < tokens.length) {
       if (/^[a-zA-Z]$/.test(tokens[i])) {
         cmd = tokens[i];
         i++;
+        skip = false;
         if (cmd === "Z" || cmd === "z") {
-          if (typeof path.closePath === "function") path.closePath();
-          else if (typeof path.close === "function") path.close();
+          ops.push({ c: "Z" });
           x = startX; y = startY;
+          lastCx = null; lastCy = null;
+          continue;
+        }
+        const probe = cmd.toUpperCase();
+        if (probe !== "M" && probe !== "L" && probe !== "H" && probe !== "V"
+          && probe !== "C" && probe !== "S" && probe !== "Q" && probe !== "T") {
+          // Includes A/a (elliptical arcs) and anything else this build cannot
+          // express: the command is reported and its numeric parameters skipped.
+          unsupported.push(cmd);
+          skip = true;
           continue;
         }
       }
+      if (skip) { i++; continue; }
       const upper = cmd.toUpperCase();
       const rel = cmd !== upper;
       if (upper === "M" || upper === "L") {
         const nx = num(), ny = num();
         x = rel ? x + nx : nx;
         y = rel ? y + ny : ny;
-        if (upper === "M") { startX = x; startY = y; path.moveTo(x, y); cmd = rel ? "l" : "L"; }
-        else path.lineTo(x, y);
+        see(x, y);
+        if (upper === "M") {
+          subpaths += 1;
+          startX = x; startY = y;
+          ops.push({ c: "M", x: x, y: y });
+          cmd = rel ? "l" : "L";
+        } else ops.push({ c: "L", x: x, y: y });
+        lastCx = null; lastCy = null;
       } else if (upper === "H") {
         const nx = num();
         x = rel ? x + nx : nx;
-        path.lineTo(x, y);
+        see(x, y);
+        ops.push({ c: "L", x: x, y: y });
+        lastCx = null; lastCy = null;
       } else if (upper === "V") {
         const ny = num();
         y = rel ? y + ny : ny;
-        path.lineTo(x, y);
-      } else if (upper === "C") {
-        const x1 = rel ? x + num() : num();
-        const y1 = rel ? y + num() : num();
+        see(x, y);
+        ops.push({ c: "L", x: x, y: y });
+        lastCx = null; lastCy = null;
+      } else if (upper === "C" || upper === "S") {
+        let x1, y1;
+        if (upper === "S") {
+          // Smooth cubic: the first handle mirrors the previous curve's second.
+          x1 = lastCx == null ? x : 2 * x - lastCx;
+          y1 = lastCy == null ? y : 2 * y - lastCy;
+        } else {
+          x1 = rel ? x + num() : num();
+          y1 = rel ? y + num() : num();
+        }
         const x2 = rel ? x + num() : num();
         const y2 = rel ? y + num() : num();
         const nx = rel ? x + num() : num();
         const ny = rel ? y + num() : num();
-        if (typeof path.curveTo !== "function") throw new Error("_mg.svg: cavalry.Path has no curveTo in this build");
-        path.curveTo(x1, y1, x2, y2, nx, ny);
+        ops.push({ c: "C", x1: x1, y1: y1, x2: x2, y2: y2, x: nx, y: ny });
+        see(x1, y1); see(x2, y2); see(nx, ny);
+        lastCx = x2; lastCy = y2;
         x = nx; y = ny;
-      } else if (upper === "Q") {
-        const qx = rel ? x + num() : num();
-        const qy = rel ? y + num() : num();
+      } else if (upper === "Q" || upper === "T") {
+        let qx, qy;
+        if (upper === "T") {
+          qx = lastCx == null ? x : 2 * x - lastCx;
+          qy = lastCy == null ? y : 2 * y - lastCy;
+        } else {
+          qx = rel ? x + num() : num();
+          qy = rel ? y + num() : num();
+        }
         const nx = rel ? x + num() : num();
         const ny = rel ? y + num() : num();
-        if (typeof path.quadTo === "function") path.quadTo(qx, qy, nx, ny);
-        else if (typeof path.curveTo === "function") path.curveTo(qx, qy, nx, ny, nx, ny);
-        else throw new Error("_mg.svg: cavalry.Path has no quadratic/curve support in this build");
+        ops.push({ c: "Q", qx: qx, qy: qy, x: nx, y: ny });
+        see(qx, qy); see(nx, ny);
+        lastCx = qx; lastCy = qy;
         x = nx; y = ny;
       } else {
         i++;
       }
     }
-    return path;
+    const hasBounds = isFinite(limits.minX) && isFinite(limits.maxX);
+    const box = this.__viewBox(opts.viewBox);
+    let ox = box && isFinite(box.x) ? box.x : 0;
+    let oy = box && isFinite(box.y) ? box.y : 0;
+    if (opts.center && hasBounds) {
+      ox = (limits.minX + limits.maxX) / 2;
+      oy = (limits.minY + limits.maxY) / 2;
+    }
+    let scale = 1;
+    if (opts.scaleTo != null && hasBounds) {
+      const span = Math.max(limits.maxX - limits.minX, limits.maxY - limits.minY);
+      if (span > 0 && Number(opts.scaleTo) > 0) scale = Number(opts.scaleTo) / span;
+    }
+    const flip = opts.flipY === true;
+    const map = (px, py) => [(px - ox) * scale, (flip ? oy - py : py - oy) * scale];
+    // Pass 2: hand the normalised geometry to Cavalry.
+    for (let k = 0; k < ops.length; k++) {
+      const op = ops[k];
+      if (op.c === "Z") {
+        if (typeof path.closePath === "function") path.closePath();
+        else if (typeof path.close === "function") path.close();
+      } else if (op.c === "M") {
+        const p = map(op.x, op.y);
+        path.moveTo(p[0], p[1]);
+      } else if (op.c === "L") {
+        const p = map(op.x, op.y);
+        path.lineTo(p[0], p[1]);
+      } else if (op.c === "C") {
+        if (typeof path.curveTo !== "function") throw new Error("_mg.svg: cavalry.Path has no curveTo in this build");
+        const a = map(op.x1, op.y1);
+        const b = map(op.x2, op.y2);
+        const p = map(op.x, op.y);
+        path.curveTo(a[0], a[1], b[0], b[1], p[0], p[1]);
+      } else if (op.c === "Q") {
+        const a = map(op.qx, op.qy);
+        const p = map(op.x, op.y);
+        if (typeof path.quadTo === "function") path.quadTo(a[0], a[1], p[0], p[1]);
+        else if (typeof path.curveTo === "function") path.curveTo(a[0], a[1], p[0], p[1], p[0], p[1]);
+        else throw new Error("_mg.svg: cavalry.Path has no quadratic/curve support in this build");
+      }
+    }
+    const bounds = hasBounds
+      ? {
+        x: (limits.minX - ox) * scale,
+        y: (flip ? oy - limits.maxY : limits.minY - oy) * scale,
+        width: (limits.maxX - limits.minX) * scale,
+        height: (limits.maxY - limits.minY) * scale
+      }
+      : null;
+    return {
+      path: path,
+      meta: {
+        subpaths: subpaths,
+        commands: ops.length,
+        unsupported: unsupported,
+        viewBox: box,
+        center: opts.center === true,
+        flipY: flip,
+        scale: Math.round(scale * 1e6) / 1e6,
+        bounds: bounds
+      }
+    };
+  },
+
+  /** Path only — kept so existing callers and presets see the previous shape. */
+  __svgPath(d, opts) {
+    return this.__svgParse(d, opts).path;
   },
 
   /** The currently applied theme, or null. */
@@ -608,6 +973,11 @@ const _mg = {
    * organicFloat creates a noise node (or oscillator when type is oscillator);
    * spring has no native node in Cavalry 2.8, so it bakes a damped cosine into
    * keyframes; staggerFalloff wires a falloff into a stagger on the target.
+   *
+   * Every branch is idempotent: a node of the requested type already driving that
+   * attribute is retuned in place and reported under reused, and the wire is
+   * skipped when it is already connected. Pass force to build a second node.
+   * stiffness / dampingRatio / overshoot / holdFrames are taken through _mg.rig.
    */
   modulate(layerId, attrPath, config) {
     config = config == null ? {} : config;
@@ -650,18 +1020,48 @@ const _mg = {
       if (!attrList.length) throw new Error("modulate: attrPath is required");
       if (attrList.length !== 1) throw new Error("modulate: spring needs one scalar attribute");
       const attr = attrList[0];
+      /*
+       * The equilibrium the spring settles on. api.get answers at the playhead,
+       * so a derived rest is whatever an earlier write left under it — after a
+       * sampled rig has been keyed once, re-reading the layer feeds the curve's
+       * own value back in as its rest. That is the documented default (it keeps
+       * every existing call site producing what it produced before), but a rig
+       * that has to be reproducible across runs pins it with { rest: n }.
+       */
       let rest = 0;
-      try { rest = Number(api.get(target, attr)); } catch (e) { rest = 0; }
+      let restSource = "layer";
+      const restSpec = config.rest != null ? config.rest : config.settleTo;
+      if (restSpec != null) {
+        rest = Number(restSpec);
+        restSource = "spec";
+      } else {
+        try { rest = Number(api.get(target, attr)); } catch (e) { rest = 0; }
+      }
       if (!isFinite(rest)) rest = 0;
       const duration = Math.max(6, Math.round(config.duration == null ? 45 : Number(config.duration)));
-      const startFrame = Math.round(config.startFrame == null ? 0 : Number(config.startFrame));
+      // stiffness / dampingRatio / overshoot are the rig vocabulary (see _mg.rig);
+      // they are expressed through the same damped cosine, converted to the
+      // normalised window this sampler integrates over. Bare damping / frequency
+      // keep their native sampler meaning, so existing call sites are unchanged.
+      const rigSpec = config.stiffness != null || config.dampingRatio != null || config.overshoot != null
+        ? this.rig(config) : null;
+      const hold = Math.max(0, Math.round(Number(config.holdFrames == null ? 0 : config.holdFrames)));
+      const startFrame = Math.round(config.startFrame == null ? 0 : Number(config.startFrame)) + (rigSpec ? rigSpec.holdFrames : hold);
       const unit = /scale/i.test(attr);
       const fallbackAmplitude = unit ? 0.15 : (/opacity/i.test(attr) ? 20 : 40);
       const amplitude = Number(config.amplitude != null ? config.amplitude : (config.distance != null ? config.distance : fallbackAmplitude));
-      const damping = config.damping == null ? 6 : Number(config.damping);
-      const frequency = config.frequency == null ? 2.25 : Number(config.frequency);
+      let damping = config.damping == null ? 6 : Number(config.damping);
+      let frequency = config.frequency == null ? 2.25 : Number(config.frequency);
+      if (rigSpec) {
+        damping = rigSpec.dampingRatio * rigSpec.angularFrequency * duration;
+        frequency = rigSpec.cyclesPerFrame * duration;
+      }
       let samples = Math.max(4, Math.min(24, Math.round(duration / 2)));
       if (samples > duration) samples = duration;
+      // Nyquist: a sampled cosine needs at least two points per cycle. Cavalry
+      // has no native spring node, so a rig stiffer than the sample budget can
+      // hold is reported rather than silently turned into noise.
+      const aliased = frequency * 2 > samples;
       const points = [];
       for (let i = 0; i <= samples; i++) {
         const t = i / samples;
@@ -670,7 +1070,46 @@ const _mg = {
         points.push([startFrame + Math.round(t * duration), Math.round(value * 1000) / 1000]);
       }
       points[samples][1] = rest;
+      const times = points.map(function (p) { return p[0]; });
+      /*
+       * Two runs of the same rig always land on the same frame times, so the
+       * window alone cannot prove the curve is unchanged: retuning stiffness
+       * keeps the sample grid and replaces the values. Remember the exact spec
+       * that produced the keys (same globalThis pattern __rememberPreset uses)
+       * and skip only when both the spec and the window still match. Without a
+       * remembered spec the safe move is to rewrite — keying frames that already
+       * exist updates their values instead of duplicating keys.
+       */
+      const rigKey = String(target) + "|" + attr;
+      const signature = [duration, samples, startFrame, rest, amplitude, damping, frequency].join("|");
+      let cache = null;
+      try {
+        if (!globalThis.__mgSpringRigs) globalThis.__mgSpringRigs = {};
+        cache = globalThis.__mgSpringRigs;
+      } catch (e) { cache = null; }
+      let already = null;
+      try { already = (api.getKeyframeTimes(target, attr) || []).slice().sort(function (a, b) { return a - b; }); } catch (e) { already = null; }
+      const sameWindow = !!already && already.length === times.length
+        && times.every(function (frame, index) { return already[index] === frame; });
+      if (!config.force && sameWindow && cache && cache[rigKey] === signature) {
+        return {
+          type: "spring",
+          target: target,
+          attrs: [attr],
+          node: null,
+          keyframes: points.length,
+          duration: duration,
+          rest: rest,
+          restSource: restSource,
+          amplitude: amplitude,
+          cycles: Math.round(frequency * 100) / 100,
+          aliased: aliased,
+          skipped: "already-sampled",
+          eased: "unchanged — the same sampled rig is already keyed on this attribute"
+        };
+      }
       _rb.kf(target, attr, points, "None");
+      if (cache) cache[rigKey] = signature;
       return {
         type: "spring",
         target: target,
@@ -678,7 +1117,15 @@ const _mg = {
         node: null,
         keyframes: points.length,
         duration: duration,
+        rest: rest,
+        restSource: restSource,
         amplitude: amplitude,
+        cycles: Math.round(frequency * 100) / 100,
+        stiffness: rigSpec ? rigSpec.stiffness : null,
+        dampingRatio: rigSpec ? rigSpec.dampingRatio : null,
+        overshoot: rigSpec ? rigSpec.overshoot : null,
+        aliased: aliased,
+        retuned: sameWindow,
         eased: "sampled damped cosine (no native spring node in Cavalry 2.8)",
         applied: points.length
       };
@@ -701,14 +1148,23 @@ const _mg = {
       if (falloffCfg.repetitions != null) falloffAttrs.repetitions = falloffCfg.repetitions;
       if (falloffCfg.seed != null) falloffAttrs.seed = falloffCfg.seed;
       if (config.seed != null) falloffAttrs.seed = config.seed;
-      const falloff = _rb.layer("falloff", name + " Falloff", falloffAttrs);
       const staggerAttrs = { offset: offset };
       if (staggerCfg.strength != null) staggerAttrs.strength = staggerCfg.strength;
       if (staggerCfg.minimum != null) staggerAttrs.minimum = staggerCfg.minimum;
       if (staggerCfg.maximum != null) staggerAttrs.maximum = staggerCfg.maximum;
-      const stagger = _rb.layer("stagger", name + " Stagger", staggerAttrs);
-      api.connect(stagger, "id", target, attr);
-      api.connect(falloff, "id", stagger, "falloffs");
+      // Re-running the rig retunes the nodes that already drive the attribute
+      // instead of stacking a second stagger/falloff pair on top of them.
+      const reuse = !config.force;
+      let stagger = reuse ? this.__findModifier(target, attr, "stagger") : null;
+      const reused = { stagger: !!stagger, falloff: false };
+      if (stagger) { try { _rb.set(stagger, staggerAttrs); } catch (e) {} }
+      else stagger = _rb.layer("stagger", name + " Stagger", staggerAttrs);
+      const own = String(this.__inConnections(stagger, "falloffs")[0] || "").split(".")[0];
+      let falloff = reuse && own && this.__layerType(own) === "falloff" ? own : null;
+      if (falloff) { reused.falloff = true; try { _rb.set(falloff, falloffAttrs); } catch (e) {} }
+      else falloff = _rb.layer("falloff", name + " Falloff", falloffAttrs);
+      _mg.wire(stagger, "id", target, attr);
+      _mg.wire(falloff, "id", stagger, "falloffs");
       return {
         type: "staggerFalloff",
         target: target,
@@ -716,6 +1172,8 @@ const _mg = {
         falloff: falloff,
         stagger: stagger,
         offset: offset,
+        reused: reused,
+        created: (reused.stagger ? 0 : 1) + (reused.falloff ? 0 : 1),
         applied: 2
       };
     }
@@ -731,22 +1189,23 @@ const _mg = {
     const nodes = [];
     let amplitudeUsed = 0;
 
+    const reusedNodes = [];
     for (let i = 0; i < attrList.length; i++) {
       const attr = attrList[i];
       const unit = /scale|opacity/i.test(attr);
       const fallback = unit ? (/opacity/i.test(attr) ? 18 : 0.12) : 30;
       const amplitude = Number(config.amplitude != null ? config.amplitude : (config.strength != null ? config.strength : fallback));
       amplitudeUsed = amplitude;
-      let node;
-      if (type === "oscillator") {
-        const attrs = { strength: amplitude, frequency: frequency, timeScale: timeScale };
+      const nodeType = type === "oscillator" ? "oscillator" : "noise";
+      let attrs;
+      if (nodeType === "oscillator") {
+        attrs = { strength: amplitude, frequency: frequency, timeScale: timeScale };
         if (config.trigType != null) attrs.trigType = config.trigType;
         if (config.waveType != null) attrs.waveType = config.waveType;
         if (config.offset != null) attrs.offset = config.offset;
         if (config.stagger != null) attrs.stagger = config.stagger;
-        node = _rb.layer("oscillator", name + " " + attr, attrs);
       } else {
-        const attrs = {
+        attrs = {
           strength: amplitude,
           "generator.frequency": frequency,
           "generator.timeScale": timeScale,
@@ -758,9 +1217,16 @@ const _mg = {
         if (config.offset != null) attrs["generator.offset"] = config.offset;
         if (config.strengthToZero != null) attrs.strengthToZero = config.strengthToZero;
         if (config.useNormals != null) attrs.useNormals = config.useNormals;
-        node = _rb.layer("noise", name + " " + attr, attrs);
       }
-      api.connect(node, "id", target, attr);
+      // An oscillator or noise node already wired to this attribute is retuned in
+      // place; only force builds a second one. Re-running a modulation must never
+      // stack nodes — the visible result is the sum of every input.
+      let node = config.force ? null : this.__findModifier(target, attr, nodeType);
+      if (node) {
+        try { _rb.set(node, attrs); reusedNodes.push(node); } catch (e) { node = null; }
+      }
+      if (!node) node = _rb.layer(nodeType, name + " " + attr, attrs);
+      _mg.wire(node, "id", target, attr);
       nodes.push(node);
     }
 
@@ -771,6 +1237,8 @@ const _mg = {
       nodes: nodes,
       amplitude: amplitudeUsed,
       frequency: frequency,
+      reused: reusedNodes,
+      created: nodes.length - reusedNodes.length,
       applied: nodes.length
     };
   },
@@ -880,6 +1348,122 @@ const _mg = {
     return tracked;
   },
 
+  /**
+   * Slug rule shared with Stallion's /state readback (Introspect.ts __slug):
+   * non-alphanumerics collapse to "_", trimmed, lowercased, capped at 48 chars.
+   * Both sides must agree, or a semantic id captured over HTTP cannot be
+   * addressed inside a script.
+   */
+  __slug(text) {
+    return String(text == null ? "" : text)
+      .replace(/[^A-Za-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .toLowerCase()
+      .slice(0, 48);
+  },
+
+  __niceName(id) {
+    if (id == null || id === "") return "";
+    try { return String(api.getNiceName(id) || ""); } catch (e) { return ""; }
+  },
+
+  /**
+   * Scene-derived index for one call: every comp layer in api.getCompLayers(false)
+   * order, keyed by layer id, semantic id and slug. Rebuilt per call on purpose —
+   * caching it would go stale the moment a preset creates a layer, and the walk is
+   * one read per layer rather than one per attribute.
+   */
+  __semanticIndex() {
+    const index = { order: [], byId: {}, bySemantic: {}, bySlug: {} };
+    let ids = [];
+    try { ids = api.getCompLayers(false) || []; } catch (e) { ids = []; }
+    for (let i = 0; i < ids.length; i++) {
+      const id = String(ids[i]);
+      const type = this.__layerType(id);
+      const name = this.__niceName(id);
+      const slug = this.__slug(name || type);
+      const semantic = (slug || "layer") + "_" + i;
+      const row = { id: id, index: i, name: name, type: type, slug: slug, semanticId: semantic };
+      index.order.push(id);
+      index.byId[id] = row;
+      index.bySemantic[semantic] = id;
+      if (!index.bySlug[slug]) index.bySlug[slug] = [];
+      index.bySlug[slug].push(id);
+    }
+    return index;
+  },
+
+  /**
+   * Deterministic semantic id for a layer — slug of its nice name plus its index
+   * in the comp, e.g. beat_02_card_spring_3. Same scheme as the Stallion readback,
+   * so the id a diff pass reads out of /state is the id a refinement patch writes
+   * back to, without carrying opaque bridge ids between runs.
+   */
+  semantic(id, index) {
+    const row = (index || this.__semanticIndex()).byId[String(id)];
+    return row ? row.semanticId : null;
+  },
+
+  /** Every layer of the active comp as { id, semanticId, name, type }, in comp order. */
+  semantics(limit) {
+    const index = this.__semanticIndex();
+    const cap = limit == null ? index.order.length : Math.max(0, Math.round(Number(limit)));
+    const out = [];
+    for (let i = 0; i < index.order.length && i < cap; i++) {
+      const row = index.byId[index.order[i]];
+      out.push({ id: row.id, semanticId: row.semanticId, name: row.name, type: row.type });
+    }
+    return out;
+  },
+
+  /**
+   * Resolve a live layer id, an exact semantic id, or a bare slug (all layers that
+   * share it) to layer ids. Returns [] when nothing matches so the caller decides
+   * whether that is an error.
+   */
+  find(query, index) {
+    const target = index || this.__semanticIndex();
+    const text = String(query == null ? "" : query).trim();
+    if (!text) return [];
+    if (target.byId[text]) return [text];
+    if (target.bySemantic[text]) return [target.bySemantic[text]];
+    const hits = target.bySlug[text] || target.bySlug[this.__slug(text)];
+    return hits ? hits.slice() : [];
+  },
+
+  __readAttr(id, attr) {
+    try { return api.get(id, attr); } catch (e) { return null; }
+  },
+
+  /**
+   * Value equality good enough to prove a write is a no-op: numbers within a
+   * relative 1e-6, exact strings and booleans, deep equality for arrays and
+   * objects. A colour object and its hex spelling are deliberately *not* treated
+   * as equal — anything the comparison cannot prove equal is written.
+   */
+  __sameValue(current, wanted) {
+    if (current == null || wanted == null) return false;
+    if (typeof wanted === "number") {
+      const n = Number(current);
+      if (!isFinite(n) || !isFinite(wanted)) return false;
+      return Math.abs(n - wanted) <= 1e-6 * Math.max(1, Math.abs(wanted));
+    }
+    if (typeof wanted === "string") return (typeof current === "string" || typeof current === "number") && String(current) === wanted;
+    if (typeof wanted === "boolean") return !!current === wanted;
+    if (Array.isArray(wanted)) {
+      if (!Array.isArray(current) || current.length !== wanted.length) return false;
+      for (let i = 0; i < wanted.length; i++) if (!this.__sameValue(current[i], wanted[i])) return false;
+      return true;
+    }
+    if (typeof wanted === "object") {
+      if (typeof current !== "object" || Array.isArray(current)) return false;
+      const keys = Object.keys(wanted);
+      for (let i = 0; i < keys.length; i++) if (!this.__sameValue(current[keys[i]], wanted[keys[i]])) return false;
+      return true;
+    }
+    return false;
+  },
+
   presetRoots() {
     try {
       return globalThis.__mgPresetRoots || null;
@@ -888,9 +1472,25 @@ const _mg = {
     }
   },
 
-  /** Expand explicit ids, the live selection, or the last preset's roots. */
+  /**
+   * Expand explicit ids, semantic ids, the live selection, or the last preset's
+   * roots. semantic/semantics take precedence over the selection fallback so a
+   * refinement pass can address the layer a diff was measured on rather than
+   * whatever happens to be selected now.
+   */
   __patchTargets(spec) {
     spec = spec || {};
+    const queries = [].concat(spec.semantics || [], spec.semantic != null ? [spec.semantic] : []);
+    if (queries.length) {
+      const index = this.__semanticIndex();
+      const hits = [];
+      for (let q = 0; q < queries.length; q++) {
+        const found = this.find(queries[q], index);
+        if (!found.length) throw new Error("_mg: no layer in the active comp matches " + queries[q]);
+        for (let f = 0; f < found.length; f++) if (hits.indexOf(found[f]) < 0) hits.push(found[f]);
+      }
+      return hits;
+    }
     const tracked = this.presetRoots();
     let roots = [];
     if (Array.isArray(spec.ids) && spec.ids.length) {

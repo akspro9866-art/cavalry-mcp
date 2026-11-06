@@ -1,7 +1,10 @@
 /**
  * Pure helpers shared by tools and tests. No imports from the MCP SDK or
- * the bridge — everything here is string in / string out.
+ * the bridge — everything here is string in / string out, plus `node:path`
+ * for the separator rules that keep scene URIs identical on both OSes.
  */
+
+import path from "node:path";
 
 /**
  * Interpolate a value as a JavaScript string literal. JSON.stringify already
@@ -84,6 +87,40 @@ export const EASING_NAMES = [
 ] as const;
 
 export const EASING_LIST = EASING_NAMES.join(", ");
+
+/**
+ * Cross-platform path discipline.
+ *
+ * Two different kinds of path travel through this project and they must not be
+ * confused:
+ *
+ *   - a **disk path**, used by Node's `fs` on the machine running the MCP
+ *     server. Built with `path.resolve` / `path.join`, so it carries native
+ *     separators and is the only form `fs.statSync` and friends should see.
+ *   - a **scene URI**, embedded in JSON and handed to Cavalry across the
+ *     Stallion bridge. Cavalry is a Qt host that normalises separators itself,
+ *     and the value is also compared against paths read back from the bridge,
+ *     so it has to be byte-identical on Windows and Linux. That form is always
+ *     forward-slash.
+ *
+ * Never split or join a scene URI on a literal `"/"` or `"\\\\"`; go through
+ * these helpers so the same rule applies on both legs.
+ */
+
+/** A disk path rendered as the forward-slash URI Cavalry receives. */
+export function toSceneUri(diskPath: string): string {
+  return String(diskPath).replaceAll("\\", "/");
+}
+
+/** Join URI segments with POSIX rules, independent of the host OS. */
+export function joinSceneUri(...segments: string[]): string {
+  return path.posix.join(...segments.map(toSceneUri));
+}
+
+/** Parent of a scene URI, POSIX rules. */
+export function sceneUriDirname(sceneUri: string): string {
+  return path.posix.dirname(toSceneUri(sceneUri));
+}
 
 /**
  * Build the script that reports a layer list as structured JSON. `idsExpr`

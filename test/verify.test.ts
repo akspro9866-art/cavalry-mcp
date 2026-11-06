@@ -14,6 +14,7 @@ import {
   runVerifyFrames,
   type NormalizedVerifyFrames,
 } from "../src/verify.js";
+import { removeTreeSync } from "../src/fs-safe.js";
 
 type TestApi = MockApi & {
   primitive(type: string, name?: string): string;
@@ -107,7 +108,7 @@ test("verify: renders previews, restores the playhead and reports real collision
     assert.equal(switched.comp.width, 800);
     assert.equal(switched.comp.name, "Second");
   } finally {
-    fs.rmSync(outDir, { recursive: true, force: true });
+    removeTreeSync(outDir);
   }
 });
 
@@ -131,7 +132,7 @@ test("verify: runVerifyFrames surfaces collision and missing-preview warnings", 
     assert.match(result.warnings[0], /^frame 0: "Card" .* overlaps "Title" .* by 260x160 \(41600px\^2\)$/);
     assert.ok(fs.existsSync(result.frames[0].file));
   } finally {
-    fs.rmSync(outDir, { recursive: true, force: true });
+    removeTreeSync(outDir);
   }
 
   const missing = await runVerifyFrames(
@@ -151,7 +152,7 @@ test("verify: runVerifyFrames surfaces collision and missing-preview warnings", 
   );
   assert.equal(missing.missing.length, 1);
   assert.match(missing.warnings[0], /preview was not written/);
-  fs.rmSync(outDir, { recursive: true, force: true });
+  removeTreeSync(outDir);
 
   await assert.rejects(
     runVerifyFrames({ frames: [0], outDir }, { execute: async () => ({ ok: false, text: "boom" }) }),

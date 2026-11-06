@@ -6,6 +6,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { startMockStallion } from "./helpers/mockStallion.js";
+import { removeTreeSync } from "../src/fs-safe.js";
 
 const exec = promisify(execFile);
 const mock = await startMockStallion({ native: true });
@@ -15,7 +16,7 @@ const env = { ...process.env, STALLION_URL: `http://127.0.0.1:${mock.port}` };
 
 test.after(async () => {
   await mock.close();
-  fs.rmSync(workdir, { recursive: true, force: true });
+  removeTreeSync(workdir);
 });
 
 test("CLI -e executes inline JavaScript with helpers", async () => {
@@ -128,6 +129,17 @@ test("CLI --render-frames chunks the sequence and reports the budget it used", a
   assert.deepEqual(resumePayload.rendered, []);
   assert.equal(resumePayload.reused.length, 4);
   assert.match(resumed.stderr, /\[render\] complete \| 0 rendered \| 4 reused/);
+});
+
+test("CLI --rig publishes the preset's procedural tuning contract as JSON", async () => {
+  const { stdout } = await exec(process.execPath, [cli, "--rig", "bento_cards"], { env });
+  const contract = JSON.parse(stdout);
+  assert.equal(contract.id, "bento_cards");
+  for (const term of ["stiffness", "dampingRatio", "overshoot", "staggerOffset", "holdFrames", "easing", "easings", "tunable"]) {
+    assert.ok(term in contract, `missing ${term} in --rig output`);
+  }
+  assert.equal(contract.tunable.staggerOffset, "stagger");
+  await assert.rejects(exec(process.execPath, [cli, "--rig", "unknown"], { env }), /Unknown preset/);
 });
 
 test("CLI --probe answers capability questions and writes the report file", async () => {
