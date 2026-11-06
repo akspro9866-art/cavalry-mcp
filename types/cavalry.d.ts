@@ -91,11 +91,95 @@ interface MotionGraphicsThemeState {
   radius: Record<string, number>;
 }
 
+/** A box in getBoundingBox space: x/y are the box's min corner. */
+interface MotionGraphicsBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface MotionGraphicsFitOptions {
+  /** "comp" (default) or "raster" (top-left, y-down video pixels). */
+  space?: "comp" | "raster";
+  compWidth?: number;
+  compHeight?: number;
+  /** Accepted residual in composition pixels. Default 0.5. */
+  tolerance?: number;
+  /** Maximum measurement/correction rounds. Default 5, capped at 10. */
+  maxPasses?: number;
+  /** Resize generator.dimensions/radius/fontSize before using scale. Default true. */
+  intrinsic?: boolean;
+  /** Keep the layer's aspect ratio. Default false (both axes exact). */
+  preserveAspect?: boolean;
+  /** When false, width is reported but not gated. Default true. */
+  fitWidth?: boolean;
+}
+
+interface MotionGraphicsFitResult {
+  ok: boolean;
+  layerId: string;
+  type: string;
+  space: string;
+  target: MotionGraphicsBox;
+  box: MotionGraphicsBox;
+  passes: number;
+  error: MotionGraphicsBox;
+  applied: { intrinsic: string; scale: boolean; position: boolean };
+}
+
+interface MotionGraphicsPatchEntry {
+  /** Stable handle registered by _mg.alias or the `alias` creation attribute. */
+  alias?: string;
+  /** Layer id, semantic id, or "@alias" handle. */
+  target?: string;
+  ids?: string[];
+  semantic?: string;
+  semantics?: string[];
+  attrs?: Record<string, unknown>;
+  delta?: Record<string, number>;
+  /** Multiplicative factor applied after attrs/delta: current × factor. */
+  multiply?: Record<string, number>;
+  frame?: number;
+  shiftKeyframes?: number | { frames: number; attrs?: string[] };
+  easing?: unknown;
+  /** Write even when the current value already matches. */
+  force?: boolean;
+  /** false disables the unchanged-value skip. */
+  diff?: boolean;
+}
+
+interface MotionGraphicsPatchResult {
+  patched: number;
+  changes: Array<{ id: string; semantic: string | null; attrs: Record<string, unknown>; frame: number | null }>;
+  skipped: Array<{ id: string; semantic: string | null; attr: string; value: unknown; reason: "unchanged" }>;
+  targets: string[];
+  semantics?: string[];
+}
+
 interface MotionGraphicsHelpers {
   comp(w?: number, h?: number, fps?: number, endFrame?: number, bgColor?: string): string;
-  shape(type: string, name: string, attrs?: CavalryAttributes): string;
-  layer(type: string, name: string, attrs?: CavalryAttributes): string;
-  text(str: string, size?: number, color?: string, extraAttrs?: CavalryAttributes): string;
+  shape(type: string, name: string, attrs?: CavalryAttributes & { alias?: string }): string;
+  layer(type: string, name: string, attrs?: CavalryAttributes & { alias?: string }): string;
+  text(str: string, size?: number, color?: string, extraAttrs?: CavalryAttributes & { alias?: string }): string;
+  /** Register a stable "@handle" for a layer in the cross-execution alias registry. */
+  alias(id: string, name: string): string;
+  /** Every registered alias as { "@handle": "layerId" }. */
+  aliases(): Record<string, string>;
+  /** Resolve ids/semantic ids/aliases to layer ids. */
+  find(query: string, index?: unknown): string[];
+  /** Idempotent in-place delta/absolute patch by id, semantic id, selection or alias. */
+  patch(spec: MotionGraphicsPatchEntry | MotionGraphicsPatchEntry[]): MotionGraphicsPatchResult | MotionGraphicsPatchResult[];
+  patchSelected(spec: Record<string, unknown>): Record<string, unknown>;
+  /** Video raster pixels (top-left, y-down) → Cavalry comp space (centred, y-up). */
+  fromRaster(x: number, y: number, compWidth: number, compHeight: number): { x: number; y: number };
+  fromRaster(point: [number, number] | { x: number; y: number }, compWidth: number, compHeight: number): { x: number; y: number };
+  /** Fit a layer's measured world bounds to a target box synchronously. */
+  fitToBounds(
+    layerId: string,
+    targetBox: MotionGraphicsBox | [number, number, number, number] | { centre: { x: number; y: number }; width: number; height: number },
+    options?: MotionGraphicsFitOptions,
+  ): MotionGraphicsFitResult;
   wire(srcId: string, srcAttr: string, dstId: string, dstAttr: string): void;
   deform(targetId: string, deformerType: string, name: string, attrs?: CavalryAttributes): string;
   subMesh(textId: string, level?: 0 | 1 | 2, staggerOffset?: number): {

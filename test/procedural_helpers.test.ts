@@ -107,6 +107,68 @@ test("_mg.patch applies deltas and absolute values in place, at a frame when giv
   assert.equal((result.second as { changes: { frame: number }[] }).changes[0].frame, 12);
 });
 
+test("_mg.patch mutates a stable @alias in place, is idempotent and stays one undo step", () => {
+  const { result, state, api } = run(`
+    const card = _mg.shape("rectangle", "Hero Card", {
+      alias: "@hero_card", position: { x: 0, y: 0 }
+    });
+    const first = _mg.patch({ target: "@hero_card", attrs: { "position.x": 120 } });
+    const again = _mg.patch({ alias: "hero_card", attrs: { "position.x": 120 } });
+    const delta = _mg.undoGroup({
+      name: "refine hero",
+      operations: function () {
+        return _mg.patch({ alias: "@hero_card", delta: { "position.y": 10 } });
+      }
+    });
+    const keyed = [
+      _mg.patch({ alias: "@hero_card", attrs: { "scale.x": 1.2 }, frame: 12 }),
+      _mg.patch({ alias: "@hero_card", attrs: { "scale.x": 1.4 }, frame: 12 })
+    ];
+    return {
+      card, first, again, delta, keyed, aliases: _mg.aliases(),
+      layers: api.getCompLayers(true).length,
+      x: api.get(card, "position.x"), y: api.get(card, "position.y")
+    };
+  `);
+  const card = result.card as string;
+  assert.equal(result.layers, 1, "patching never creates a layer");
+  assert.equal(result.x, 120);
+  assert.equal(result.y, 10);
+  assert.deepEqual({ ...(result.aliases as Record<string, string>) }, { "@hero_card": card });
+  assert.equal((result.first as { patched: number }).patched, 1);
+  // The second absolute write compares equal and is reported, not written again.
+  assert.equal((result.again as { patched: number }).patched, 0);
+  assert.equal((result.again as { skipped: { attr: string }[] }).skipped[0].attr, "position.x");
+  // The delta inside _mg.undoGroup lands in exactly one start/end pair.
+  assert.equal((result.delta as { patched: number }).patched, 1);
+  const groupOpen = state.order.filter((entry) => entry === "startUndo:refine hero").length;
+  const groupClose = state.order.filter((entry) => entry === "endUndo").length;
+  assert.equal(groupOpen, 1);
+  assert.equal(groupClose, 1);
+  // Re-writing the same frame corrects the value instead of stacking keys.
+  const scaleKeys = state.keyframes.filter((k) => k.layerId === card && "scale.x" in k.attributes);
+  assert.equal(scaleKeys.length, 1);
+  assert.equal(scaleKeys[0].attributes["scale.x"], 1.4);
+});
+
+test("_mg.patch multiply scales the current value and composes after delta", () => {
+  const { result, api } = run(`
+    const card = _mg.shape("rectangle", "Scaled", {
+      alias: "scaled", scale: { x: 1, y: 2 }, position: { x: 10, y: 0 }
+    });
+    const scaled = _mg.patch({ alias: "scaled", multiply: { "scale.x": 1.08, "scale.y": 0.5 } });
+    const composed = _mg.patch({ alias: "scaled", delta: { "position.x": 5 }, multiply: { "position.x": 2 } });
+    return { card, scaled, composed };
+  `);
+  const card = result.card as string;
+  assert.equal((result.scaled as { patched: number }).patched, 1);
+  assert.equal(api.get(card, "scale.x"), 1.08);
+  assert.equal(api.get(card, "scale.y"), 1);
+  // delta first, then multiply: (10 + 5) × 2.
+  assert.equal(api.get(card, "position.x"), 30);
+  assert.equal((result.composed as { patched: number }).patched, 1);
+});
+
 test("_mg.svg imports an SVG asset, parents it and applies pose", () => {
   const { result, state } = run(`
     const parent = _mg.shape("rectangle", "Parent");
