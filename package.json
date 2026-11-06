@@ -1,6 +1,6 @@
 {
   "name": "cavalry-mcp",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "description": "Low-token Cavalry MCP and Stallion CLI with batched motion helpers, procedural presets, and atomic Undo.",
   "type": "module",
   "main": "dist/index.js",
@@ -49,5 +49,10 @@
     "@types/pngjs": "^6.0.5",
     "tsx": "^4.23.15",
     "typescript": "^5.7.0"
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./lib": "./dist/lib/index.js",
+    "./package.json": "./package.json"
   }
 }

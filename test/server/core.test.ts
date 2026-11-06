@@ -13,6 +13,9 @@ const mock = await startMockStallion({ native: true });
 const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "cav-core-"));
 process.env.STALLION_URL = `http://127.0.0.1:${mock.port}`;
 delete process.env.ENABLE_LEGACY_TOOLS;
+// These tests exercise the granular CRUD surface, which the compact 3-tool
+// default hides: opt in before the server module is evaluated.
+process.env.CAVALRY_MCP_LEGACY_CRUD = "1";
 const { server } = await import("../../src/index.js");
 const [clientToServer, serverToClient] = InMemoryTransport.createLinkedPair();
 await server.connect(serverToClient);
@@ -36,14 +39,19 @@ function text(result: ToolResult): string {
 
 test("default MCP surface is the compact promoted tool set", async () => {
   const listed = await client.listTools();
+  // This file opts into CAVALRY_MCP_LEGACY_CRUD, so the listed surface is the
+  // granular set PLUS the three compact tools every surface carries.
   assert.deepEqual(listed.tools.map(tool => tool.name).sort(), [
+    "cavalry_apply_dsl",
     "cavalry_batch",
     "cavalry_doctor",
     "cavalry_inspect",
+    "cavalry_inspect_compact",
     "cavalry_probe_api",
     "cavalry_render_frames",
     "cavalry_run_preset",
     "cavalry_run_script",
+    "cavalry_search_presets",
     "cavalry_verify_frames",
   ]);
   for (const tool of listed.tools) {

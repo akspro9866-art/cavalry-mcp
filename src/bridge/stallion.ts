@@ -252,6 +252,162 @@ export async function runScriptWithResult(
   return (await runScriptWithExecution(code, config, opts)).raw;
 }
 
+/** Batch-step request — mirrors the bridge contract in stallion's BatchStep.ts. */
+export interface BatchStepRequest {
+  script?: string;
+  /** Declarative `_mg` manifest; typed loosely so manifest interfaces assign. */
+  dslManifest?: object;
+  sampleFrames?: number[];
+  queryLayers?: string[];
+  renderFrames?: boolean;
+  renderOutputDir?: string;
+  dirtyAttributesOnly?: boolean;
+  scale?: number;
+  compId?: string;
+}
+
+export interface BatchStepFrameEntry {
+  geometries?: Array<Record<string, unknown>>;
+  renderedPngPath?: string;
+  renderError?: string;
+  [key: string]: unknown;
+}
+
+/** Reshaped `/batch-step` envelope (one GET /get payload). */
+export interface BatchStepResponse {
+  ok: boolean;
+  kind?: string;
+  seq?: unknown;
+  compId?: string;
+  executionTimeMs?: number;
+  scriptResult?: unknown;
+  manifestResult?: { ok?: boolean; created?: Record<string, string>; ops?: Array<Record<string, unknown>>; errors?: string[] };
+  frames?: Record<string, BatchStepFrameEntry>;
+  compactDomTsv?: string;
+  sampledFrames?: number;
+  rendered?: number;
+  renderErrors?: Array<{ frame: number; error: string }>;
+  restoredFrame?: number;
+  error?: string;
+  code?: string;
+  [key: string]: unknown;
+}
+
+export interface ReadbackResponse {
+  ok: boolean;
+  kind?: string;
+  compId?: string;
+  frame?: number;
+  total?: number;
+  returned?: number;
+  truncated?: boolean;
+  nextOffset?: number;
+  layers?: Array<Record<string, unknown>>;
+  error?: string;
+  code?: string;
+  [key: string]: unknown;
+}
+
+/** POST /post with a pre-shaped payload (batch-step, state, layers readback). */
+async function postRaw(
+  payload: Record<string, unknown>,
+  config: StallionConfig,
+  httpTimeoutMs?: number,
+): Promise<void> {
+  const url = `${config.url}/post`;
+  const budget = httpTimeoutMs ?? config.httpTimeoutMs;
+  try {
+    const response = await fetchWithTimeout(url, config, { method: "POST", body: JSON.stringify(payload) }, budget);
+    if (!response.ok) throw new Error(`Stallion returned ${response.status}: ${await response.text()}`);
+  } catch (err) {
+    throw connectionError(err, url, budget);
+  }
+}
+
+/** Poll /get until the payload with this seq carries the expected kind. */
+async function waitForKind(
+  config: StallionConfig,
+  seq: string,
+  kind: string,
+  timeoutMs: number,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetchWithTimeout(`${config.url}/get`, config);
+      if (response.ok) {
+        const text = await response.text();
+        const parsed = JSON.parse(text) as { seq?: unknown; kind?: string };
+        if (parsed.kind === kind && String(parsed.seq) === seq) return text;
+      }
+    } catch {
+      // A render or modal can delay one poll; the overall deadline remains bounded.
+    }
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  return "";
+}
+
+/**
+ * One atomic batch-step round trip: execute + step + measure + render. The
+ * result is the reshaped envelope served on GET /get (`kind: "batch-step"`).
+ */
+export async function runBatchStep(
+  request: BatchStepRequest,
+  config: StallionConfig = CONFIG,
+  opts?: { timeoutMs?: number; httpTimeoutMs?: number },
+): Promise<BatchStepResponse> {
+  const seq = randomUUID();
+  const payload: Record<string, unknown> = { type: "batch-step", seq };
+  for (const key of ["script", "dslManifest", "sampleFrames", "queryLayers", "renderFrames", "renderOutputDir", "dirtyAttributesOnly", "scale", "compId"] as const) {
+    const value = request[key];
+    if (value !== undefined) payload[key] = value;
+  }
+  const raw = await enqueue(async () => {
+    await postRaw(payload, config, opts?.httpTimeoutMs);
+    return waitForKind(config, seq, "batch-step", opts?.timeoutMs ?? Math.max(config.resultTimeoutMs, 60_000));
+  });
+  if (!raw) {
+    return { ok: false, kind: "batch-step", seq, error: "No batch-step result from Stallion — is the bridge running Stallion v0.11+?" };
+  }
+  try {
+    return JSON.parse(raw) as BatchStepResponse;
+  } catch {
+    return { ok: false, kind: "batch-step", seq, error: `Unparsable batch-step result: ${raw.slice(0, 500)}` };
+  }
+}
+
+/**
+ * Structured readback (`state` or `layers`) — the cheap scene walk the compact
+ * inspector serializes to TSV. Executed through the bridge's readback runtime,
+ * never mutating, so no undo group opens.
+ */
+export async function runReadback(
+  kind: "state" | "layers",
+  request: { frame?: number; attrs?: string[]; offset?: number; limit?: number; budgetMs?: number; attributes?: boolean; compId?: string } = {},
+  config: StallionConfig = CONFIG,
+  opts?: { timeoutMs?: number; httpTimeoutMs?: number },
+): Promise<ReadbackResponse> {
+  const seq = randomUUID();
+  const payload: Record<string, unknown> = { type: kind, seq };
+  for (const key of ["frame", "attrs", "offset", "limit", "budgetMs", "attributes", "compId"] as const) {
+    const value = request[key];
+    if (value !== undefined) payload[key] = value;
+  }
+  const raw = await enqueue(async () => {
+    await postRaw(payload, config, opts?.httpTimeoutMs);
+    return waitForKind(config, seq, kind, opts?.timeoutMs ?? Math.max(config.resultTimeoutMs, 30_000));
+  });
+  if (!raw) {
+    return { ok: false, kind, seq, error: `No ${kind} readback from Stallion — is the bridge running Stallion v0.10+?` };
+  }
+  try {
+    return JSON.parse(raw) as ReadbackResponse;
+  } catch {
+    return { ok: false, kind, seq, error: `Unparsable ${kind} result: ${raw.slice(0, 500)}` };
+  }
+}
+
 export async function pingStallion(config: StallionConfig = CONFIG): Promise<boolean> {
   try {
     await fetchWithTimeout(`${config.url}/`, config);

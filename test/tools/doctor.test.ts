@@ -17,6 +17,9 @@ process.env.STALLION_URL = `http://127.0.0.1:${mock.port}`;
 delete process.env.ENABLE_LEGACY_TOOLS;
 
 const { runDoctor, formatDoctorReport, matchesExpectedVersion } = await import("../../src/tools/doctor.js");
+// These tests exercise the granular CRUD surface, which the compact 3-tool
+// default hides: opt in before the server module is evaluated.
+process.env.CAVALRY_MCP_LEGACY_CRUD = "1";
 const { server } = await import("../../src/index.js");
 const [clientToServer, serverToClient] = InMemoryTransport.createLinkedPair();
 await server.connect(serverToClient);

@@ -20,6 +20,9 @@ process.env.CAVALRY_PORT = String(mock.port);
 process.env.CAVALRY_RESULT_PATH = path.join(workdir, "result.json");
 process.env.ENABLE_LEGACY_TOOLS = "true";
 
+// These tests exercise the granular CRUD surface, which the compact 3-tool
+// default hides: opt in before the server module is evaluated.
+process.env.CAVALRY_MCP_LEGACY_CRUD = "1";
 const { server } = await import("../../src/index.js");
 const [clientToServer, serverToClient] = InMemoryTransport.createLinkedPair();
 await server.connect(serverToClient);
