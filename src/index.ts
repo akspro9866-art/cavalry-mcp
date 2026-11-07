@@ -5,12 +5,11 @@ import { registerCompactTools } from "./server/compact-tools.js";
 import { registerCoreTools } from "./server/core-tools.js";
 import { registerLegacyTools } from "./server/legacy/index.js";
 import { registerStrictTools } from "./server/strict-tools.js";
+import { loadRefcloneModule, registerRefcloneTools, type RefcloneToolDependencies } from "./server/refclone-tools.js";
 import { compilePreset, PRESET_NAMES } from "./presets/cavalry_snippets.js";
 import { executeMotionScript, type ScriptOutcome } from "./runtime/execute.js";
 import { compileInspection } from "./runtime/inspect.js";
 import { z } from "zod";
-
-const server = new McpServer({ name: "cavalry-mcp", version: "3.4.0" });
 
 function result(outcome: ScriptOutcome) {
   return {
@@ -22,34 +21,40 @@ function result(outcome: ScriptOutcome) {
   };
 }
 
-// `--strict-dsl` (CLI flag) or CAVALRY_MCP_STRICT_DSL=1 selects the zero-slop
-// agent surface: EXACTLY four tools (cavalry_exec_mg, cavalry_query_presets,
-// cavalry_inspect_rig, cavalry_clone_beat) and nothing else — the legacy
-// atomic/granular tools are not registered at all, so no client can drift
-// into per-frame keyframe baking.
-const strictDsl =
-  process.argv.includes("--strict-dsl") ||
-  process.env.CAVALRY_MCP_STRICT_DSL === "1" ||
-  process.env.CAVALRY_MCP_STRICT_DSL === "true";
+export interface ServerOptions {
+  env?: NodeJS.ProcessEnv;
+  argv?: readonly string[];
+  refclone?: RefcloneToolDependencies;
+}
 
-// The granular CRUD surface — cavalry_run_script, cavalry_inspect,
-// cavalry_run_preset and the cavalry_batch/verify/render/probe/doctor core —
-// stays callable for internal callers behind CAVALRY_MCP_LEGACY_CRUD=1, and
-// the historical per-attribute tools behind ENABLE_LEGACY_TOOLS=true (which
-// implies the CRUD gate). Under --strict-dsl neither is registered.
-const legacyCrud =
-  process.env.CAVALRY_MCP_LEGACY_CRUD === "1" ||
-  process.env.CAVALRY_MCP_LEGACY_CRUD === "true" ||
-  process.env.ENABLE_LEGACY_TOOLS === "true";
+/** Build registrations without connecting a transport; injectable for offline tests. */
+export function createServer({ env = process.env, argv = process.argv, refclone }: ServerOptions = {}): McpServer {
+  // Explicit mode wins over every older flag. Even an empty explicit mode is
+  // invalid: never turn a typo into an unexpectedly permissive tool surface.
+  const mode = env.MCP_MODE;
+  if (mode !== undefined && mode !== "refclone_strict" && mode !== "interactive_authoring") {
+    throw new Error(`Invalid MCP_MODE ${JSON.stringify(mode)}; expected refclone_strict or interactive_authoring`);
+  }
+  const server = new McpServer({ name: "cavalry-mcp", version: "3.4.0" });
+  if (mode === "refclone_strict") {
+    registerRefcloneTools(server, refclone ?? { loadRefclone: () => loadRefcloneModule(env.REFCLONE_MODULE_PATH) });
+    return server;
+  }
 
-if (strictDsl) {
-  registerStrictTools(server);
-} else {
-  // The default agent surface is exactly three compact tools (see
-  // compact_tools.ts): declarative scene building, bounded preset discovery and
-  // strict-TSV inspection. The granular CRUD tools below are the "AI slop"
-  // path — per-frame keyframe setters and raw single-attribute writes — and
-  // stay available only behind the CRUD gate.
+  const interactive = mode === "interactive_authoring";
+  const strictDsl = !interactive && (
+    argv.includes("--strict-dsl") ||
+    env.CAVALRY_MCP_STRICT_DSL === "1" || env.CAVALRY_MCP_STRICT_DSL === "true"
+  );
+  if (strictDsl) {
+    registerStrictTools(server);
+    return server;
+  }
+
+  // Compatibility caveat: unset MCP_MODE still honors the older opt-ins.
+  // interactive_authoring explicitly enables BOTH CRUD and granular tools.
+  const legacyTools = interactive || env.ENABLE_LEGACY_TOOLS === "true";
+  const legacyCrud = legacyTools || env.CAVALRY_MCP_LEGACY_CRUD === "1" || env.CAVALRY_MCP_LEGACY_CRUD === "true";
   if (legacyCrud) {
   server.tool(
     "cavalry_run_script",
@@ -84,13 +89,13 @@ if (strictDsl) {
 
   registerCoreTools(server);
   }
+  // Unset mode and no opt-ins preserve the existing compact three-tool default.
+  registerCompactTools(server);
+  if (legacyTools) registerLegacyTools(server);
+  return server;
 }
 
-if (!strictDsl) registerCompactTools(server);
-
-if (!strictDsl && legacyCrud && process.env.ENABLE_LEGACY_TOOLS === "true") registerLegacyTools(server);
-
-export { server };
+export const server = createServer();
 
 async function main() {
   await server.connect(new StdioServerTransport());

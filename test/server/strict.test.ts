@@ -116,16 +116,15 @@ test("cavalry_inspect_rig summarizes the bbox trajectory from /batch_inspect", a
   assert.equal(drift.dx, 200);
 });
 
-// The clone_beat tests run the real sibling refclone checkout; cavalry-mcp's
-// own CI checks out only this repo, so there they skip deterministically (in
-// refclone's CI and any local sibling layout they run for real).
+// Existing real-sibling integration, opt-in ONLY via npm run test:live.
+// Ordinary npm test/test:ci must not spawn refclone just because it is installed.
 const refcloneCandidates = [
   process.env.CAVALRY_REFCLONE_PATH,
   path.resolve(import.meta.dirname, "..", "..", "..", "refclone", "src", "cli.mjs"),
 ].filter((candidate): candidate is string => Boolean(candidate));
 const refcloneAvailable = refcloneCandidates.some((candidate) => fs.existsSync(candidate));
 
-test("cavalry_clone_beat reports the deterministic blocked outcome without an LLM hook", { skip: !refcloneAvailable && "sibling refclone checkout not available in this CI layout" }, async () => {
+test("cavalry_clone_beat reports the deterministic blocked outcome without an LLM hook", { skip: process.env.CAVALRY_TEST_LIVE !== "1" ? "opt in with npm run test:live" : !refcloneAvailable && "sibling refclone checkout not available in this CI layout" }, async () => {
   // The real sibling checkout runs `zero-slop` with a plan that has no
   // manifest and no llm hook: the honest outcome is a blocked telemetry with
   // zero LLM calls — never a fabricated rig.

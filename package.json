@@ -22,6 +22,8 @@
     "dev": "tsc --watch",
     "pretest": "npm run build",
     "test": "node test/run-tests.mjs",
+    "test:ci": "npm test",
+    "test:live": "npm run build && node test/run-tests.mjs --live",
     "test:watch": "node test/run-tests.mjs --watch"
   },
   "keywords": [
@@ -53,6 +55,11 @@
   "exports": {
     ".": "./dist/index.js",
     "./lib": "./dist/lib/index.js",
+    "./core": {
+      "types": "./dist/core-exports.d.ts",
+      "import": "./dist/core-exports.js",
+      "default": "./dist/core-exports.js"
+    },
     "./package.json": "./package.json"
   }
 }

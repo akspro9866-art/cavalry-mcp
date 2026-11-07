@@ -67,30 +67,32 @@ export function canonicalAttribute(name: string): string | null {
 // Zod schema
 // ---------------------------------------------------------------------------
 
+function createManifestSchema(strict: boolean) {
+const object = <T extends z.ZodRawShape>(shape: T) => strict ? z.strictObject(shape) : z.object(shape);
 const attrsSchema = z.record(z.string(), z.unknown());
 
-const easingSpecSchema = z.object({
+const easingSpecSchema = object({
   attr: z.string().min(1),
   easing: z.string().min(1),
   expression: z.string().optional(),
 });
 
 const layerSpecSchema = z.discriminatedUnion("kind", [
-  z.object({
+  object({
     kind: z.literal("shape"),
     as: z.string().min(1, "layer `as` alias must be a non-empty string"),
     shape: z.string().min(1, "a shape layer needs a primitive `shape` (rectangle, ellipse, polygon, …)"),
     name: z.string().optional(),
     attrs: attrsSchema.optional(),
   }),
-  z.object({
+  object({
     kind: z.literal("layer"),
     as: z.string().min(1),
     layerType: z.string().min(1, "a layer entry needs a Cavalry `layerType` (group, preComp, null, …)"),
     name: z.string().optional(),
     attrs: attrsSchema.optional(),
   }),
-  z.object({
+  object({
     kind: z.literal("text"),
     as: z.string().min(1),
     text: z.string(),
@@ -100,14 +102,14 @@ const layerSpecSchema = z.discriminatedUnion("kind", [
     name: z.string().optional(),
     attrs: attrsSchema.optional(),
   }),
-  z.object({
+  object({
     kind: z.literal("svg"),
     as: z.string().min(1),
     file: z.string().min(1, "an svg layer needs a scene-URI `file` (forward slashes)"),
     name: z.string().optional(),
     attrs: attrsSchema.optional(),
   }),
-  z.object({
+  object({
     kind: z.literal("image"),
     as: z.string().min(1),
     file: z.string().min(1, "an image layer needs a scene-URI `file` (forward slashes)"),
@@ -116,20 +118,20 @@ const layerSpecSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
-const keyframeEntrySchema = z.object({
+const keyframeEntrySchema = object({
   frame: z.number(),
   attrs: attrsSchema,
 });
 
 const opSpecSchema = z.discriminatedUnion("op", [
-  z.object({ op: z.literal("set"), target: z.string().min(1), attrs: attrsSchema }),
-  z.object({
+  object({ op: z.literal("set"), target: z.string().min(1), attrs: attrsSchema }),
+  object({
     op: z.literal("keyframe"),
     target: z.string().min(1),
     frames: z.array(keyframeEntrySchema).min(1, "a keyframe op needs at least one {frame, attrs} entry"),
     easing: z.union([easingSpecSchema, z.array(easingSpecSchema)]).optional(),
   }),
-  z.object({
+  object({
     op: z.literal("easing"),
     target: z.string().min(1),
     attr: z.string().min(1),
@@ -137,7 +139,7 @@ const opSpecSchema = z.discriminatedUnion("op", [
     easing: z.string().min(1),
     expression: z.string().optional(),
   }),
-  z.object({
+  object({
     op: z.literal("connect"),
     from: z.string().min(1),
     fromAttr: z.string().min(1),
@@ -145,18 +147,18 @@ const opSpecSchema = z.discriminatedUnion("op", [
     toAttr: z.string().min(1),
     force: z.boolean().optional(),
   }),
-  z.object({
+  object({
     op: z.literal("expression"),
     target: z.string().min(1),
     attrPath: z.string().min(1),
     expression: z.string().min(1),
   }),
-  z.object({ op: z.literal("delete"), targets: z.array(z.string().min(1)).min(1) }),
-  z.object({ op: z.literal("order"), target: z.string().min(1), to: z.enum(["forward", "front", "backward", "back"]) }),
-  z.object({
+  object({ op: z.literal("delete"), targets: z.array(z.string().min(1)).min(1) }),
+  object({ op: z.literal("order"), target: z.string().min(1), to: z.enum(["forward", "front", "backward", "back"]) }),
+  object({
     op: z.literal("fit"),
     target: z.string().min(1),
-    box: z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }),
+    box: object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }),
     space: z.enum(["comp", "raster"]).optional(),
     compWidth: z.number().optional(),
     compHeight: z.number().optional(),
@@ -165,9 +167,8 @@ const opSpecSchema = z.discriminatedUnion("op", [
   }),
 ]);
 
-export const mgManifestSchema = z.object({
-  comp: z
-    .object({
+return object({
+  comp: object({
       width: z.number().int().positive().optional(),
       height: z.number().int().positive().optional(),
       fps: z.number().positive().optional(),
@@ -179,7 +180,7 @@ export const mgManifestSchema = z.object({
   ops: z.array(opSpecSchema).max(5000).optional(),
   presets: z
     .array(
-      z.object({
+      object({
         id: z.string().min(1, "a preset invocation needs its library `id`"),
         params: z.record(z.string(), z.unknown()).optional(),
       }),
@@ -187,6 +188,13 @@ export const mgManifestSchema = z.object({
     .max(16)
     .optional(),
 });
+
+}
+
+/** Compatibility schema: unknown structural keys are stripped, as before. */
+export const mgManifestSchema = createManifestSchema(false);
+/** Strict schema: reject unknown keys at every structural object boundary. */
+export const strictMgManifestSchema = createManifestSchema(true);
 
 /** Deep-ish structural type used by the normalizer after Zod validation. */
 export type ValidatedMgManifest = z.infer<typeof mgManifestSchema>;
@@ -277,7 +285,7 @@ function normalizePresetInvocations(
       : ` ${PRESET_DEFS.length} presets exist across 14 category packs; discover ids with cavalry_query_presets or cavalry_search_presets.`;
     errors.push(`presets[${index}].id: unknown preset '${raw}'.${hint}`);
   }
-  return out.length ? out : undefined;
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -352,9 +360,23 @@ export interface MgValidationError {
  * per problem, each naming the offending entry and the expected shape.
  */
 export function validateMgManifest(manifest: unknown): MgValidationOk | MgValidationError {
+  return validateManifest(manifest, false);
+}
+
+/**
+ * Fail-closed entry for core consumers: no stripped structural keys, unknown
+ * preset parameters, invalid parameter types, or partially valid op/preset lists.
+ * Alias rewrites remain explicit in fixes. This is not a raw-JS sandbox: the
+ * manifest language still has expression ops; refclone owns its BeatSpec policy.
+ */
+export function validateMgManifestStrict(manifest: unknown): MgValidationOk | MgValidationError {
+  return validateManifest(manifest, true);
+}
+
+function validateManifest(manifest: unknown, strict: boolean): MgValidationOk | MgValidationError {
   let parsed: ValidatedMgManifest;
   try {
-    parsed = mgManifestSchema.parse(manifest);
+    parsed = (strict ? strictMgManifestSchema : mgManifestSchema).parse(manifest);
   } catch (error) {
     const issues =
       typeof error === "object" && error !== null && "issues" in error
@@ -404,11 +426,35 @@ export function validateMgManifest(manifest: unknown): MgValidationOk | MgValida
   // Preset ids: validate against the library, auto-resolve aliases and near
   // misses, and turn real misses into actionable errors with top-3 matches.
   if (parsed.presets) {
-    const firstMissingId = extractFirstPresetId(parsed.presets);
+    const firstMissingId = parsed.presets.find(invocation => {
+      const raw = invocation.id.trim();
+      const resolved = PRESET_ALIASES[raw.toLowerCase()] ?? resolvePresetName(raw);
+      return !PRESET_DEFS.some(def => def.id === resolved);
+    })?.id ?? "";
     const errors: string[] = [];
     const normalized = normalizePresetInvocations(parsed.presets, fixes, errors);
-    if (!normalized && errors.length) {
+    // A valid sibling must NEVER hide an invalid invocation (partial execution).
+    if (errors.length) {
       return { ok: false, errors, suggestions: fuzzyMatchPresets(firstMissingId, 3).map((hit) => hit.id) };
+    }
+    if (strict) {
+      for (const [index, invocation] of (normalized ?? []).entries()) {
+        const def = PRESET_DEFS.find(candidate => candidate.id === invocation.id)!;
+        for (const [key, value] of Object.entries(invocation.params ?? {})) {
+          const where = `presets[${index}].params.${key}`;
+          const param = Object.hasOwn(def.params, key) ? def.params[key] : undefined;
+          if (!param) {
+            errors.push(`${where}: unknown parameter for '${def.id}'`);
+            continue;
+          }
+          const schema = {
+            string: z.string(), color: z.string(), bool: z.boolean(),
+            int: z.number().int(), double: z.number().finite(), json: z.json(),
+          }[param.type];
+          if (!schema.safeParse(value).success) errors.push(`${where}: expected ${param.type}`);
+        }
+      }
+      if (errors.length) return { ok: false, errors: errors.slice(0, 20) };
     }
     parsed.presets = normalized;
   }
@@ -420,10 +466,6 @@ export function validateMgManifest(manifest: unknown): MgValidationOk | MgValida
   }
 
   return { ok: true, normalized: parsed, fixes, unknownAliases, warnings };
-}
-
-function extractFirstPresetId(invocations: Array<{ id: string; params?: Record<string, unknown> }> | undefined): string {
-  return invocations?.find((invocation) => typeof invocation?.id === "string")?.id ?? "";
 }
 
 /**
