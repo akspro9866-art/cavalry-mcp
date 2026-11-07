@@ -317,7 +317,8 @@ export async function runRefcloneBeat(args: {
   baseUrl?: string;
   timeoutMs?: number;
 }): Promise<RefcloneBeatOutcome> {
-  const cli = resolveRefcloneCli(args.refclonePath);
+  // Validate the request BEFORE resolving the CLI, so a missing plan is a
+  // structured JSON error even on machines without the sibling checkout.
   let planFile: string | null = null;
   if (args.planPath) {
     if (!fs.existsSync(args.planPath)) {
@@ -330,6 +331,7 @@ export async function runRefcloneBeat(args: {
   } else {
     return { ok: false, payload: { ok: false, error: "cavalry_clone_beat requires `plan` (inline object) or `planPath`." } };
   }
+  const cli = resolveRefcloneCli(args.refclonePath);
   // The CLI's positional parser requires a reference argument before flags;
   // zero-slop reads its input from --plan and ignores the positional.
   const cliArgs = [cli, "zero-slop", "beat", "--plan", planFile];
