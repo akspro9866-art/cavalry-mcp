@@ -713,7 +713,7 @@ same state capture.
 ```bash
 npm ci
 npm run build      # tsc -> dist/ and the preset manifest
-npm test           # 235 tests, no Cavalry required
+npm test           # 262 tests, no Cavalry required
 ```
 
 The suite runs the real server against an in-memory MCP client and a mock Stallion: an HTTP
