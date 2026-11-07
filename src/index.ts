@@ -4,12 +4,13 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { registerCompactTools } from "./server/compact-tools.js";
 import { registerCoreTools } from "./server/core-tools.js";
 import { registerLegacyTools } from "./server/legacy/index.js";
+import { registerStrictTools } from "./server/strict-tools.js";
 import { compilePreset, PRESET_NAMES } from "./presets/cavalry_snippets.js";
 import { executeMotionScript, type ScriptOutcome } from "./runtime/execute.js";
 import { compileInspection } from "./runtime/inspect.js";
 import { z } from "zod";
 
-const server = new McpServer({ name: "cavalry-mcp", version: "3.3.0" });
+const server = new McpServer({ name: "cavalry-mcp", version: "3.4.0" });
 
 function result(outcome: ScriptOutcome) {
   return {
@@ -21,19 +22,35 @@ function result(outcome: ScriptOutcome) {
   };
 }
 
-// The default agent surface is exactly three compact tools (see
-// compact_tools.ts): declarative scene building, bounded preset discovery and
-// strict-TSV inspection. The granular CRUD surface — cavalry_run_script,
-// cavalry_inspect, cavalry_run_preset and the cavalry_batch/verify/render/
-// probe/doctor core — stays callable for internal callers behind
-// CAVALRY_MCP_LEGACY_CRUD=1, and the historical per-attribute tools behind
-// ENABLE_LEGACY_TOOLS=true (which implies the CRUD gate).
+// `--strict-dsl` (CLI flag) or CAVALRY_MCP_STRICT_DSL=1 selects the zero-slop
+// agent surface: EXACTLY four tools (cavalry_exec_mg, cavalry_query_presets,
+// cavalry_inspect_rig, cavalry_clone_beat) and nothing else — the legacy
+// atomic/granular tools are not registered at all, so no client can drift
+// into per-frame keyframe baking.
+const strictDsl =
+  process.argv.includes("--strict-dsl") ||
+  process.env.CAVALRY_MCP_STRICT_DSL === "1" ||
+  process.env.CAVALRY_MCP_STRICT_DSL === "true";
+
+// The granular CRUD surface — cavalry_run_script, cavalry_inspect,
+// cavalry_run_preset and the cavalry_batch/verify/render/probe/doctor core —
+// stays callable for internal callers behind CAVALRY_MCP_LEGACY_CRUD=1, and
+// the historical per-attribute tools behind ENABLE_LEGACY_TOOLS=true (which
+// implies the CRUD gate). Under --strict-dsl neither is registered.
 const legacyCrud =
   process.env.CAVALRY_MCP_LEGACY_CRUD === "1" ||
   process.env.CAVALRY_MCP_LEGACY_CRUD === "true" ||
   process.env.ENABLE_LEGACY_TOOLS === "true";
 
-if (legacyCrud) {
+if (strictDsl) {
+  registerStrictTools(server);
+} else {
+  // The default agent surface is exactly three compact tools (see
+  // compact_tools.ts): declarative scene building, bounded preset discovery and
+  // strict-TSV inspection. The granular CRUD tools below are the "AI slop"
+  // path — per-frame keyframe setters and raw single-attribute writes — and
+  // stay available only behind the CRUD gate.
+  if (legacyCrud) {
   server.tool(
     "cavalry_run_script",
     "Run batched Cavalry JavaScript with _mg helpers and one Undo group. Return a value for JSON readback.",
@@ -66,11 +83,12 @@ if (legacyCrud) {
   );
 
   registerCoreTools(server);
+  }
 }
 
-registerCompactTools(server);
+if (!strictDsl) registerCompactTools(server);
 
-if (legacyCrud && process.env.ENABLE_LEGACY_TOOLS === "true") registerLegacyTools(server);
+if (!strictDsl && legacyCrud && process.env.ENABLE_LEGACY_TOOLS === "true") registerLegacyTools(server);
 
 export { server };
 

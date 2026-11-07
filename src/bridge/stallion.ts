@@ -416,3 +416,245 @@ export async function pingStallion(config: StallionConfig = CONFIG): Promise<boo
     return false;
   }
 }
+
+// ---------------------------------------------------------------------------
+// v0.11 fast-loop kinds: batch_inspect, checkpoint, rollback, render_frame_fast
+// ---------------------------------------------------------------------------
+
+/** Reshaped `/batch_inspect` envelope (see stallion's BatchInspect.ts). */
+export interface BatchInspectResponse {
+  ok: boolean;
+  kind?: string;
+  seq?: unknown;
+  compId?: string;
+  compFrameRate?: number | null;
+  compResolution?: [number, number] | null;
+  frames?: number[];
+  /** frame → layerId → { bbox: {x,y,w,h,cx,cy}, attrs, visible } */
+  timeline?: Record<string, Record<string, { bbox: { x: number; y: number; w: number; h: number; cx: number; cy: number }; attrs: Record<string, unknown>; visible: boolean }>>;
+  unknownLayerIds?: string[];
+  restoredFrame?: number;
+  error?: string;
+  code?: string;
+  [key: string]: unknown;
+}
+
+export interface CheckpointResponse {
+  ok: boolean;
+  kind?: string;
+  seq?: unknown;
+  snapshotId?: string;
+  compId?: string;
+  frame?: number;
+  layerCount?: number;
+  state?: object;
+  tmpFile?: string | null;
+  error?: string;
+  code?: string;
+  [key: string]: unknown;
+}
+
+export interface RollbackResponse {
+  ok: boolean;
+  kind?: string;
+  seq?: unknown;
+  snapshotId?: string;
+  compId?: string;
+  restoredFrame?: number;
+  layerCount?: number;
+  deleted?: string[];
+  recreated?: Array<{ from: string; to: string }>;
+  reappliedCount?: number;
+  keyframesRestored?: number;
+  connectionsRestored?: number;
+  connectionsSkipped?: number;
+  error?: string;
+  code?: string;
+  [key: string]: unknown;
+}
+
+export interface RenderFrameFastResponse {
+  ok: boolean;
+  kind?: string;
+  seq?: unknown;
+  compId?: string;
+  frame?: number;
+  scaleFactor?: number;
+  scale?: number;
+  file?: string;
+  /** Disk path the live bridge reports when it cannot inline bytes. */
+  outPath?: string;
+  inline?: boolean;
+  pngBase64?: string;
+  /** Where the resolved pixels came from after client readback. */
+  pixelSource?: "inline" | "disk" | "unavailable";
+  width?: number;
+  height?: number;
+  sizeBytes?: number | null;
+  exists?: boolean;
+  contentHash?: string;
+  frameHash?: string | null;
+  inlineNote?: string;
+  restoredFrame?: number;
+  error?: string;
+  code?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Geometry-only multi-frame readback matrix. This is the call Stage 4.5's
+ * local solver hammers while it converges: no pixels rendered, playhead
+ * restored, one round trip per refinement candidate evaluation batch.
+ */
+export async function runBatchInspect(
+  request: { frames: number[]; layerIds?: string[]; attributes?: string[]; includeHidden?: boolean; compId?: string },
+  config: StallionConfig = CONFIG,
+  opts?: { timeoutMs?: number; httpTimeoutMs?: number },
+): Promise<BatchInspectResponse> {
+  const seq = randomUUID();
+  const payload: Record<string, unknown> = { type: "batch_inspect", seq };
+  for (const key of ["frames", "layerIds", "attributes", "includeHidden", "compId"] as const) {
+    const value = request[key];
+    if (value !== undefined) payload[key] = value;
+  }
+  const raw = await enqueue(async () => {
+    await postRaw(payload, config, opts?.httpTimeoutMs);
+    return waitForKind(config, seq, "batch_inspect", opts?.timeoutMs ?? Math.max(config.resultTimeoutMs, 30_000));
+  });
+  if (!raw) {
+    return { ok: false, kind: "batch_inspect", seq, error: "No batch_inspect result from Stallion — is the bridge running Stallion v0.11+?" };
+  }
+  try {
+    return JSON.parse(raw) as BatchInspectResponse;
+  } catch {
+    return { ok: false, kind: "batch_inspect", seq, error: `Unparsable batch_inspect result: ${raw.slice(0, 500)}` };
+  }
+}
+
+/** Serialize scene state under a `snapshotId` (in-memory on the bridge + fast temp copy). */
+export async function runCheckpoint(
+  request: { snapshotId?: string; layerIds?: string[]; compId?: string } = {},
+  config: StallionConfig = CONFIG,
+  opts?: { timeoutMs?: number; httpTimeoutMs?: number },
+): Promise<CheckpointResponse> {
+  const seq = randomUUID();
+  const payload: Record<string, unknown> = { type: "checkpoint", seq };
+  for (const key of ["snapshotId", "layerIds", "compId"] as const) {
+    const value = request[key];
+    if (value !== undefined) payload[key] = value;
+  }
+  const raw = await enqueue(async () => {
+    await postRaw(payload, config, opts?.httpTimeoutMs);
+    return waitForKind(config, seq, "checkpoint", opts?.timeoutMs ?? Math.max(config.resultTimeoutMs, 30_000));
+  });
+  if (!raw) {
+    return { ok: false, kind: "checkpoint", seq, error: "No checkpoint result from Stallion — is the bridge running Stallion v0.11+?" };
+  }
+  try {
+    return JSON.parse(raw) as CheckpointResponse;
+  } catch {
+    return { ok: false, kind: "checkpoint", seq, error: `Unparsable checkpoint result: ${raw.slice(0, 500)}` };
+  }
+}
+
+/** Restore a checkpoint by `snapshotId` or inline `state` document. */
+export async function runRollback(
+  request: { snapshotId?: string; state?: object; compId?: string } = {},
+  config: StallionConfig = CONFIG,
+  opts?: { timeoutMs?: number; httpTimeoutMs?: number },
+): Promise<RollbackResponse> {
+  const seq = randomUUID();
+  const payload: Record<string, unknown> = { type: "rollback", seq };
+  for (const key of ["snapshotId", "state", "compId"] as const) {
+    const value = request[key];
+    if (value !== undefined) payload[key] = value;
+  }
+  const raw = await enqueue(async () => {
+    await postRaw(payload, config, opts?.httpTimeoutMs);
+    return waitForKind(config, seq, "rollback", opts?.timeoutMs ?? Math.max(config.resultTimeoutMs, 30_000));
+  });
+  if (!raw) {
+    return { ok: false, kind: "rollback", seq, error: "No rollback result from Stallion — is the bridge running Stallion v0.11+?" };
+  }
+  try {
+    return JSON.parse(raw) as RollbackResponse;
+  } catch {
+    return { ok: false, kind: "rollback", seq, error: `Unparsable rollback result: ${raw.slice(0, 500)}` };
+  }
+}
+
+/** One downscaled temp-dir render for the verify loop. */
+export async function runRenderFrameFast(
+  request: { frame: number; scaleFactor?: number; inline?: boolean; outDir?: string; fileName?: string; compId?: string },
+  config: StallionConfig = CONFIG,
+  opts?: { timeoutMs?: number; httpTimeoutMs?: number },
+): Promise<RenderFrameFastResponse> {
+  const seq = randomUUID();
+  const payload: Record<string, unknown> = { type: "render_frame_fast", seq };
+  for (const key of ["frame", "scaleFactor", "inline", "outDir", "fileName", "compId"] as const) {
+    const value = request[key];
+    if (value !== undefined) payload[key] = value;
+  }
+  const raw = await enqueue(async () => {
+    await postRaw(payload, config, opts?.httpTimeoutMs);
+    return waitForKind(config, seq, "render_frame_fast", opts?.timeoutMs ?? Math.max(config.resultTimeoutMs, 30_000));
+  });
+  if (!raw) {
+    return { ok: false, kind: "render_frame_fast", seq, error: "No render_frame_fast result from Stallion — is the bridge running Stallion v0.11+?" };
+  }
+  try {
+    return resolveRenderFrameFastPixels(JSON.parse(raw) as RenderFrameFastResponse);
+  } catch {
+    return { ok: false, kind: "render_frame_fast", seq, error: `Unparsable render_frame_fast result: ${raw.slice(0, 500)}` };
+  }
+}
+
+/**
+ * Live/mock pixel parity for `/render_frame_fast`.
+ *
+ * The mock synthesizes the buffer in memory (`pngBase64`, `inlineBase64` in
+ * some clients); a live Cavalry script host has no binary read, so it writes
+ * the PNG to disk and names it — `outPath` (newer) or `file` (v0.11). When an
+ * envelope arrives without an inline buffer, the bytes are read from the
+ * local filesystem here, so downstream PNG decoding and Stage 5 SSIM/IoU
+ * verification work identically against both surfaces. Failures degrade
+ * honestly: `pixelSource: "unavailable"` and no fabricated pixels.
+ */
+export function resolveRenderFrameFastPixels(envelope: RenderFrameFastResponse, readFile: typeof fs.readFileSync = fs.readFileSync): RenderFrameFastResponse {
+  if (!envelope || envelope.ok !== true) return envelope;
+  const index = envelope as Record<string, unknown>;
+  const altInline = typeof index.inlineBase64 === "string" && index.inlineBase64.length > 0 ? (index.inlineBase64 as string) : null;
+  const inline = typeof envelope.pngBase64 === "string" && envelope.pngBase64.length > 0
+    ? "pngBase64"
+    : altInline
+      ? "inlineBase64"
+      : null;
+  if (inline) {
+    envelope.pixelSource = "inline";
+    if (inline === "inlineBase64") {
+      envelope.pngBase64 = altInline!;
+    }
+    return envelope;
+  }
+  const outPath = typeof envelope.outPath === "string" && envelope.outPath
+    ? envelope.outPath
+    : typeof envelope.file === "string" && envelope.file
+      ? envelope.file
+      : null;
+  if (!outPath) {
+    envelope.pixelSource = "unavailable";
+    return envelope;
+  }
+  try {
+    const bytes = readFile(outPath);
+    if (bytes.length === 0) throw new Error("zero-byte render");
+    envelope.outPath = outPath;
+    envelope.pngBase64 = bytes.toString("base64");
+    envelope.pixelSource = "disk";
+    envelope.inline = false;
+  } catch (error) {
+    envelope.pixelSource = "unavailable";
+    envelope.inlineNote = `disk readback failed for ${outPath}: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  return envelope;
+}

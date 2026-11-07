@@ -1,3 +1,31 @@
+## [3.4.0] - 2026-11-07
+
+### Added
+
+- **Pre-flight `_mg` validator** (`src/validator/mg_validator.ts`): Zod structure
+  validation plus the automatic Cavalry 2.8.0 attribute normalizer —
+  `fillColor`/`fill.color` → `material.fillColor`, `strokeColor` →
+  `stroke.strokeColor`, `pos` → `position`, `rot` → `rotation`, `alpha` →
+  `opacity`, and friends. Every rewrite is reported as a `fixes[]` entry;
+  unknown-but-plausible attribute names are advisory warnings. Preset ids are
+  validated against the 14 category packs: aliases auto-resolve and real
+  misses return the top-3 nearest ids.
+- **`--strict-dsl` / `CAVALRY_MCP_STRICT_DSL=1`** — the zero-slop agent
+  surface: EXACTLY four tools (`cavalry_exec_mg`, `cavalry_query_presets`,
+  `cavalry_inspect_rig`, `cavalry_clone_beat`). The legacy atomic/granular
+  tools are not registered at all under this flag, so a per-frame keyframe
+  baking path is unreachable. `cavalry_clone_beat` runs the sibling refclone
+  checkout's zero-slop pipeline as a local child process and returns the
+  convergence telemetry.
+- **Stallion v0.11 fast-loop client** in `src/bridge/stallion.ts`:
+  `runBatchInspect`, `runCheckpoint`, `runRollback`, `runRenderFrameFast`.
+- Test-fixture synthesis for the v0.11 kinds in the headless mock bridge.
+  `runRenderFrameFast` resolves live/mock pixel parity: an inline buffer
+  (`pngBase64`/`inlineBase64`) wins; otherwise the PNG named by `outPath`/`file`
+  is read from disk and `pixelSource` reports where the bytes came from — a
+  live script host has no binary read, so the disk fallback keeps Stage 5
+  SSIM/IoU verification identical against both surfaces.
+
 # Changelog
 
 Notable changes to `cavalry-mcp`. Earlier releases are described by their commit

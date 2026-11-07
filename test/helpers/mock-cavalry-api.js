@@ -871,14 +871,133 @@ export function executeInMock(code, api, context = {}) {
   return { context: ctx, result: ctx.__result, state: ctx.__stallionState };
 }
 
+// ---------------------------------------------------------------------------
+// Deterministic v0.11 kind synthesis (batch-step / batch_inspect)
+// ---------------------------------------------------------------------------
+
+/** Linear keyframe evaluation for one layer attribute path at one frame. */
+function evaluateAttrAtFrame(state, layerId, attrPath, frame) {
+  const frames = state.keyframes
+    .filter((keyframe) => keyframe.layerId === layerId && attrPath in (keyframe.attributes ?? {}))
+    .map((keyframe) => ({ frame: Number(keyframe.frame), value: Number(keyframe.attributes[attrPath]) }))
+    .filter((entry) => Number.isFinite(entry.frame) && Number.isFinite(entry.value))
+    .sort((a, b) => a.frame - b.frame);
+  if (!frames.length) return null;
+  if (frame <= frames[0].frame) return frames[0].value;
+  if (frame >= frames[frames.length - 1].frame) return frames[frames.length - 1].value;
+  for (let index = 1; index < frames.length; index++) {
+    const a = frames[index - 1];
+    const b = frames[index];
+    if (frame >= a.frame && frame <= b.frame) {
+      const t = b.frame === a.frame ? 0 : (frame - a.frame) / (b.frame - a.frame);
+      return a.value + (b.value - a.value) * t;
+    }
+  }
+  return frames[frames.length - 1].value;
+}
+
+/** World box of one layer at one frame, keyframes applied. */
+function boxAtFrame(state, layerId, frame) {
+  const layer = state.layers.get(layerId);
+  if (!layer) return null;
+  const attrs = layer.attrs ?? {};
+  const px = evaluateAttrAtFrame(state, layerId, "position.x", frame) ?? positionOf(layer).x;
+  const py = evaluateAttrAtFrame(state, layerId, "position.y", frame) ?? positionOf(layer).y;
+  const size = sizeOf(layer);
+  const sx = Number(attrs["scale.x"]) || 1;
+  const sy = Number(attrs["scale.y"]) || 1;
+  const w = size.width * (sx > 5 ? sx / 100 : sx);
+  const h = size.height * (sy > 5 ? sy / 100 : sy);
+  return { x: px - w / 2, y: py - h / 2, w, h, cx: px, cy: py };
+}
+
+function mockLayerIds(state) {
+  return [...state.layers.keys()].filter((id) => !state.layers.get(id).compId || state.layers.get(id).compId === state.activeComp);
+}
+
+/** The `/batch_inspect` envelope, computed from the mock scene graph. */
+export function synthesizeBatchInspect(payload, state) {
+  const frames = (Array.isArray(payload.frames) ? payload.frames : [])
+    .map((value) => Math.round(Number(value)))
+    .filter((value) => Number.isFinite(value))
+    .slice(0, 64)
+    .sort((a, b) => a - b);
+  if (!frames.length) {
+    return { ok: false, kind: "batch_inspect", seq: payload.seq ?? null, code: "STALLION_BAD_REQUEST", error: "batch_inspect requires a non-empty numeric `frames` array (1..64)." };
+  }
+  const requested = Array.isArray(payload.layerIds) ? payload.layerIds.filter((id) => typeof id === "string" && id) : [];
+  const ids = (requested.length ? requested : mockLayerIds(state)).slice(0, 200);
+  const wantedAttrs = (Array.isArray(payload.attributes) && payload.attributes.length
+    ? payload.attributes
+    : ["position.x", "position.y", "scale.x", "scale.y", "rotation", "opacity"]
+  ).slice(0, 16);
+  const timeline = {};
+  for (const frame of frames) {
+    const frameEntry = {};
+    for (const id of ids) {
+      const box = boxAtFrame(state, id, frame);
+      if (!box) continue;
+      const layer = state.layers.get(id);
+      const attrs = {};
+      for (const path of wantedAttrs) {
+        const animated = evaluateAttrAtFrame(state, id, path, frame);
+        if (animated !== null) attrs[path] = Math.round(animated * 1000) / 1000;
+        else if (layer.attrs && path in layer.attrs) attrs[path] = layer.attrs[path];
+      }
+      frameEntry[id] = { bbox: box, attrs, visible: true };
+    }
+    timeline[String(frame)] = frameEntry;
+  }
+  const unknown = requested.filter((id) => !state.layers.has(id));
+  return {
+    ok: true,
+    kind: "batch_inspect",
+    seq: payload.seq ?? null,
+    compId: state.activeComp,
+    compFrameRate: 60,
+    compResolution: [1920, 1080],
+    frames,
+    timeline,
+    ...(unknown.length ? { unknownLayerIds: unknown } : {}),
+    restoredFrame: 0,
+  };
+}
+
+/** The `/batch-step` envelope: layers reported as compact TSV, no ops executed. */
+export function synthesizeBatchStep(payload, state) {
+  const rows = mockLayerIds(state).map((id) => {
+    const layer = state.layers.get(id);
+    const box = boxAtFrame(state, id, 0) ?? { x: 0, y: 0, w: 0, h: 0 };
+    return [id, layer.type, state.parents.get(id) ?? "", layer.name, `${box.x},${box.y},${box.w},${box.h}`, "", ""].join("\t");
+  });
+  return {
+    ok: true,
+    kind: "batch-step",
+    seq: payload.seq ?? null,
+    compId: state.activeComp,
+    executionTimeMs: 1,
+    scriptResult: null,
+    manifestResult: { ok: true, created: {}, ops: [], errors: [] },
+    frames: {},
+    compactDomTsv: rows.length ? `id\ttype\tparent\tname\tx,y,w,h\tanimAttrs\tconnections\n${rows.join("\n")}` : "",
+    sampledFrames: 0,
+    rendered: 0,
+    renderErrors: [],
+    restoredFrame: 0,
+  };
+}
+
 /**
  * Start the mock bridge. `native: true` serves seq-matched results on GET /get
- * (Stallion 0.9+); otherwise the legacy result-file protocol is used.
+ * (Stallion 0.9+); otherwise the legacy result-file protocol is used. The
+ * v0.11 fast-loop kinds (`batch-step`, `batch_inspect`) are synthesized
+ * deterministically from the mock scene state so the strict-dsl tools are
+ * testable without a live Cavalry.
  */
 export function startMockStallion(hooks = {}) {
   const state = hooks.state ?? createMockApiState();
   const api = buildMockApi(state, hooks);
-  let served = JSON.stringify({ kind: "status", stallion: "0.9.0", cavalry: "2.8.0" });
+  let served = JSON.stringify({ kind: "status", stallion: "0.11.0", cavalry: "2.8.0" });
 
   const server = http.createServer((req, res) => {
     const chunks = [];
@@ -890,6 +1009,10 @@ export function startMockStallion(hooks = {}) {
           const payload = JSON.parse(body);
           if (payload.type === "__stallion_result__") {
             served = body;
+          } else if (hooks.native && payload.type === "batch-step") {
+            served = JSON.stringify(synthesizeBatchStep(payload, state));
+          } else if (hooks.native && payload.type === "batch_inspect") {
+            served = JSON.stringify(synthesizeBatchInspect(payload, state));
           } else if (hooks.native) {
             const ctx = vm.createContext({ api, console });
             try {
