@@ -1,0 +1,619 @@
+{
+  "schema": "cloned_style_preset.v1",
+  "stage6_version": "1.0.0",
+  "style_id": "smoke_test_style",
+  "description": "Smoke-test SaaS kinetic promo: badge, headline, accent rule, CTA and three feature cards.",
+  "created_at": "2026-11-08T07:30:44.763Z",
+  "source": {
+    "pipeline": "refclone.zero-slop",
+    "stage5": {
+      "complete": true,
+      "ssim": 0.987,
+      "iou": 0.973,
+      "forced": false
+    },
+    "stage3_frames": null,
+    "reference": null
+  },
+  "defaults": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "duration_sec": 4,
+    "total_frames": 120,
+    "hero_norm": 0.5
+  },
+  "summary": {
+    "pacing_summary": "measured 4s 30fps, 10 keyed layers / 20 beats",
+    "layer_count": 11,
+    "keyed_layers": 10,
+    "beats": 20,
+    "text_layers": 7,
+    "media_layers": 0,
+    "item_groups": 1
+  },
+  "slots": {
+    "text_0": "NEW · 2026",
+    "headline": "Build faster with Northstar",
+    "subhead": "The workspace for product teams that ship weekly",
+    "cta_text": "Start free",
+    "items": [
+      {
+        "text": "SOC 2 Type II",
+        "icon": ""
+      },
+      {
+        "text": "99.99% uptime",
+        "icon": ""
+      },
+      {
+        "text": "5-min setup",
+        "icon": ""
+      }
+    ],
+    "bg_color": "#0B0C10",
+    "text_color": "#F4F6FF",
+    "primary_color": "#4F5DFF",
+    "accent_color": "#2AD8C5"
+  },
+  "palette": {
+    "bg_color": "#0B0C10",
+    "text_color": "#F4F6FF",
+    "primary_color": "#4F5DFF",
+    "accent_color": "#2AD8C5"
+  },
+  "slot_schema": {
+    "text_0": {
+      "type": "string",
+      "max_chars": 13,
+      "max_words": 4,
+      "line_breaks": 0
+    },
+    "headline": {
+      "type": "string",
+      "max_chars": 34,
+      "max_words": 5,
+      "line_breaks": 0
+    },
+    "subhead": {
+      "type": "string",
+      "max_chars": 60,
+      "max_words": 10,
+      "line_breaks": 0
+    },
+    "cta_text": {
+      "type": "string",
+      "max_chars": 13,
+      "max_words": 3,
+      "line_breaks": 0
+    },
+    "items": {
+      "type": "array",
+      "length": 3,
+      "min_items": 3,
+      "max_items": 3,
+      "item": {
+        "text": {
+          "type": "string",
+          "max_chars": 17,
+          "max_words": 5,
+          "line_breaks": 0
+        },
+        "icon": {
+          "type": "string",
+          "format": "path"
+        }
+      }
+    },
+    "bg_color": {
+      "type": "string",
+      "format": "color"
+    },
+    "text_color": {
+      "type": "string",
+      "format": "color"
+    },
+    "primary_color": {
+      "type": "string",
+      "format": "color"
+    },
+    "accent_color": {
+      "type": "string",
+      "format": "color"
+    }
+  },
+  "rig": {
+    "easings": [
+      {
+        "t": 0.1,
+        "attr": "opacity",
+        "easing": "SlowOut"
+      },
+      {
+        "t": 0.1,
+        "attr": "opacity",
+        "easing": "SlowOut"
+      },
+      {
+        "t": 0.15,
+        "attr": "position",
+        "easing": "SpringOut"
+      },
+      {
+        "t": 0.2,
+        "attr": "position",
+        "easing": "SlowOut"
+      },
+      {
+        "t": 0.2,
+        "attr": "opacity",
+        "easing": "SlowOut"
+      },
+      {
+        "t": 0.25,
+        "attr": "scale",
+        "easing": "SpringOut"
+      },
+      {
+        "t": 0.25,
+        "attr": "scale",
+        "easing": "SpringOut"
+      },
+      {
+        "t": 0.25,
+        "attr": "position",
+        "easing": "SpringOut"
+      },
+      {
+        "t": 0.25,
+        "attr": "position",
+        "easing": "SpringOut"
+      },
+      {
+        "t": 0.383333,
+        "attr": "position",
+        "easing": "SlowOut"
+      },
+      {
+        "t": 0.416667,
+        "attr": "position",
+        "easing": "SlowOut"
+      },
+      {
+        "t": 0.45,
+        "attr": "position",
+        "easing": "SlowOut"
+      }
+    ],
+    "easing_names": [
+      "SlowOut",
+      "SpringOut"
+    ],
+    "procedural_terms": [],
+    "procedural_attributes": []
+  },
+  "rig_overrides": {},
+  "scene": {
+    "layers": [
+      {
+        "as": "background",
+        "kind": "shape",
+        "name": "Background",
+        "anchor": {
+          "rx": 0.5,
+          "ry": 0.5
+        },
+        "size": {
+          "rw": 1,
+          "rh": 1
+        },
+        "base_attrs": {
+          "material.materialColor": "{{bg_color}}"
+        },
+        "motion": [],
+        "easings": [],
+        "shape": "rectangle",
+        "fill_slot": "{{bg_color}}"
+      },
+      {
+        "as": "badge_fill",
+        "kind": "shape",
+        "name": "Badge Fill",
+        "anchor": {
+          "rx": 0.5,
+          "ry": 0.194444
+        },
+        "size": {
+          "rw": 0.15625,
+          "rh": 0.051852
+        },
+        "base_attrs": {
+          "material.materialColor": "{{primary_color}}"
+        },
+        "motion": [
+          {
+            "t": 0,
+            "attrs": {
+              "opacity": 0
+            }
+          },
+          {
+            "t": 0.1,
+            "attrs": {
+              "opacity": 100
+            }
+          }
+        ],
+        "easings": [
+          {
+            "t": 0.1,
+            "attr": "opacity",
+            "easing": "SlowOut"
+          }
+        ],
+        "shape": "rectangle",
+        "fill_slot": "{{primary_color}}"
+      },
+      {
+        "as": "badge_label",
+        "kind": "text",
+        "name": "Badge Label",
+        "anchor": {
+          "rx": 0.5,
+          "ry": 0.194444
+        },
+        "size": {
+          "rw": 0,
+          "rh": 0
+        },
+        "base_attrs": {
+          "autoWidth": true,
+          "autoHeight": true
+        },
+        "motion": [
+          {
+            "t": 0,
+            "attrs": {
+              "opacity": 0
+            }
+          },
+          {
+            "t": 0.1,
+            "attrs": {
+              "opacity": 100
+            }
+          }
+        ],
+        "easings": [
+          {
+            "t": 0.1,
+            "attr": "opacity",
+            "easing": "SlowOut"
+          }
+        ],
+        "text_template": "{{text_0}}",
+        "font_size": 22,
+        "text_color_slot": "{{text_color}}"
+      },
+      {
+        "as": "headline",
+        "kind": "text",
+        "name": "Headline",
+        "anchor": {
+          "rx": 0.5,
+          "ry": 0.342593
+        },
+        "size": {
+          "rw": 0,
+          "rh": 0
+        },
+        "base_attrs": {
+          "autoWidth": true,
+          "autoHeight": true
+        },
+        "motion": [
+          {
+            "t": 0,
+            "attrs": {}
+          },
+          {
+            "t": 0.15,
+            "attrs": {}
+          }
+        ],
+        "easings": [
+          {
+            "t": 0.15,
+            "attr": "position",
+            "easing": "SpringOut"
+          }
+        ],
+        "text_template": "{{headline}}",
+        "font_size": 96,
+        "text_color_slot": "{{text_color}}"
+      },
+      {
+        "as": "subhead",
+        "kind": "text",
+        "name": "Subhead",
+        "anchor": {
+          "rx": 0.5,
+          "ry": 0.444444
+        },
+        "size": {
+          "rw": 0,
+          "rh": 0
+        },
+        "base_attrs": {
+          "autoWidth": true,
+          "autoHeight": true
+        },
+        "motion": [
+          {
+            "t": 0.05,
+            "attrs": {
+              "opacity": 0
+            }
+          },
+          {
+            "t": 0.2,
+            "attrs": {
+              "opacity": 100
+            }
+          }
+        ],
+        "easings": [
+          {
+            "t": 0.2,
+            "attr": "position",
+            "easing": "SlowOut"
+          },
+          {
+            "t": 0.2,
+            "attr": "opacity",
+            "easing": "SlowOut"
+          }
+        ],
+        "text_template": "{{subhead}}",
+        "font_size": 32,
+        "text_color_slot": "{{text_color}}"
+      },
+      {
+        "as": "accent_rule",
+        "kind": "shape",
+        "name": "Accent Rule",
+        "anchor": {
+          "rx": 0.5,
+          "ry": 0.398148
+        },
+        "size": {
+          "rw": 0.114583,
+          "rh": 0.007407
+        },
+        "base_attrs": {
+          "material.materialColor": "{{accent_color}}"
+        },
+        "motion": [
+          {
+            "t": 0.116667,
+            "attrs": {
+              "scale.x": 0.15,
+              "scale.y": 1
+            }
+          },
+          {
+            "t": 0.25,
+            "attrs": {
+              "scale.x": 1,
+              "scale.y": 1
+            }
+          }
+        ],
+        "easings": [
+          {
+            "t": 0.25,
+            "attr": "scale",
+            "easing": "SpringOut"
+          }
+        ],
+        "shape": "rectangle",
+        "fill_slot": "{{accent_color}}"
+      },
+      {
+        "as": "cta_fill",
+        "kind": "shape",
+        "name": "CTA Fill",
+        "anchor": {
+          "rx": 0.5,
+          "ry": 0.694444
+        },
+        "size": {
+          "rw": 0.208333,
+          "rh": 0.085185
+        },
+        "base_attrs": {
+          "material.materialColor": "{{primary_color}}"
+        },
+        "motion": [
+          {
+            "t": 0.133333,
+            "attrs": {
+              "scale.x": 0.92,
+              "scale.y": 0.92
+            }
+          },
+          {
+            "t": 0.25,
+            "attrs": {
+              "scale.x": 1,
+              "scale.y": 1
+            }
+          }
+        ],
+        "easings": [
+          {
+            "t": 0.25,
+            "attr": "scale",
+            "easing": "SpringOut"
+          },
+          {
+            "t": 0.25,
+            "attr": "position",
+            "easing": "SpringOut"
+          }
+        ],
+        "shape": "rectangle",
+        "fill_slot": "{{primary_color}}"
+      },
+      {
+        "as": "cta_label",
+        "kind": "text",
+        "name": "CTA Label",
+        "anchor": {
+          "rx": 0.5,
+          "ry": 0.694444
+        },
+        "size": {
+          "rw": 0,
+          "rh": 0
+        },
+        "base_attrs": {
+          "autoWidth": true,
+          "autoHeight": true
+        },
+        "motion": [
+          {
+            "t": 0.133333,
+            "attrs": {}
+          },
+          {
+            "t": 0.25,
+            "attrs": {}
+          }
+        ],
+        "easings": [
+          {
+            "t": 0.25,
+            "attr": "position",
+            "easing": "SpringOut"
+          }
+        ],
+        "text_template": "{{cta_text}}",
+        "font_size": 30,
+        "text_color_slot": "{{text_color}}"
+      },
+      {
+        "as": "card_1",
+        "kind": "text",
+        "name": "Card1",
+        "anchor": {
+          "rx": 0.208333,
+          "ry": 0.833333
+        },
+        "size": {
+          "rw": 0,
+          "rh": 0
+        },
+        "base_attrs": {
+          "autoWidth": true,
+          "autoHeight": true
+        },
+        "motion": [
+          {
+            "t": 0.25,
+            "attrs": {}
+          },
+          {
+            "t": 0.383333,
+            "attrs": {}
+          }
+        ],
+        "easings": [
+          {
+            "t": 0.383333,
+            "attr": "position",
+            "easing": "SlowOut"
+          }
+        ],
+        "text_template": "{{items.0.text}}",
+        "font_size": 24,
+        "text_color_slot": "{{text_color}}"
+      },
+      {
+        "as": "card_2",
+        "kind": "text",
+        "name": "Card2",
+        "anchor": {
+          "rx": 0.5,
+          "ry": 0.833333
+        },
+        "size": {
+          "rw": 0,
+          "rh": 0
+        },
+        "base_attrs": {
+          "autoWidth": true,
+          "autoHeight": true
+        },
+        "motion": [
+          {
+            "t": 0.283333,
+            "attrs": {}
+          },
+          {
+            "t": 0.416667,
+            "attrs": {}
+          }
+        ],
+        "easings": [
+          {
+            "t": 0.416667,
+            "attr": "position",
+            "easing": "SlowOut"
+          }
+        ],
+        "text_template": "{{items.1.text}}",
+        "font_size": 24,
+        "text_color_slot": "{{text_color}}"
+      },
+      {
+        "as": "card_3",
+        "kind": "text",
+        "name": "Card3",
+        "anchor": {
+          "rx": 0.791667,
+          "ry": 0.833333
+        },
+        "size": {
+          "rw": 0,
+          "rh": 0
+        },
+        "base_attrs": {
+          "autoWidth": true,
+          "autoHeight": true
+        },
+        "motion": [
+          {
+            "t": 0.316667,
+            "attrs": {}
+          },
+          {
+            "t": 0.45,
+            "attrs": {}
+          }
+        ],
+        "easings": [
+          {
+            "t": 0.45,
+            "attr": "position",
+            "easing": "SlowOut"
+          }
+        ],
+        "text_template": "{{items.2.text}}",
+        "font_size": 24,
+        "text_color_slot": "{{text_color}}"
+      }
+    ],
+    "extra_ops": []
+  }
+}

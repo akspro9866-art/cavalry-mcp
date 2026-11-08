@@ -99,15 +99,23 @@ async function publishedTools(legacy: boolean) {
   return { tools, close: async () => { await client.close(); await server.close(); } };
 }
 
-const COMPACT_TOOLS = ["cavalry_apply_dsl", "cavalry_search_presets", "cavalry_inspect_compact"];
+const COMPACT_TOOLS = [
+  "cavalry_apply_dsl",
+  "cavalry_search_presets",
+  "cavalry_inspect_compact",
+  "list_cloned_styles",
+  "instantiate_cloned_style",
+  "sync_active_comp_to_cloned_style",
+];
 
 for (const legacy of [false, true]) {
   test(`${legacy ? "full" : "default"} MCP surface publishes strict, fully described input schemas`, async () => {
     const { tools, close } = await publishedTools(legacy);
     try {
-      // Default = the three compact tools, exactly. Legacy adds the promoted
-      // trio, the five core tools and the per-attribute legacy set.
-      assert.equal(tools.length, legacy ? 55 : 3);
+      // Default = the three compact tools plus the three cloned-style tools,
+      // exactly. Legacy adds the promoted trio, the five core tools and the
+      // per-attribute legacy set.
+      assert.equal(tools.length, legacy ? 58 : 6);
       if (!legacy) {
         assert.deepEqual(tools.map(tool => tool.name).sort(), COMPACT_TOOLS.slice().sort());
       }

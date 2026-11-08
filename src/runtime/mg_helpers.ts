@@ -6,8 +6,10 @@ const _mg = {
   comp(w = 1920, h = 1080, fps = 60, endFrame = 180, bgColor = "#0B0C10") {
     const id = api.getActiveComp();
     api.set(id, { "resolution.x": w, "resolution.y": h, fps, backgroundColor: bgColor });
-    api.setInFrame(id, 0);
-    api.setOutFrame(id, endFrame);
+    // Cavalry 2.8: api.setOutFrame() resolves but does not update the comp;
+    // the startFrame/endFrame attributes are the working route.
+    api.set(id, { startFrame: 0, endFrame });
+    try { api.setInFrame(id, 0); } catch (e) {}
     return id;
   },
   set(id, attrs) {

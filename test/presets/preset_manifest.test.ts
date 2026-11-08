@@ -30,7 +30,10 @@ test("the preset manifest covers exactly the 120 library presets in 14 packs", (
 
   const packs = new Set(entries.map((entry) => entry.category));
   assert.equal(packs.size, 14);
-  for (const category of PRESET_CATEGORIES) assert.ok(packs.has(category.id), category.id);
+  for (const category of PRESET_CATEGORIES) {
+    if (category.presets === "dynamic") continue; // runtime registry, not the static manifest
+    assert.ok(packs.has(category.id), category.id);
+  }
 
   for (const entry of entries) {
     assert.equal(typeof entry.motionSignature, "string");

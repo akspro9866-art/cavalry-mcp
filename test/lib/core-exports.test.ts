@@ -66,7 +66,9 @@ test("core exposes the actual namespace and exact 120/14 registry without synthe
   assert.equal(Array.isArray(core.cavalrySnippets), false);
   assert.ok(Array.isArray(core.PRESET_PACKS));
   assert.deepEqual(core.PRESET_PACKS.map(pack => pack.id), IDS);
-  assert.deepEqual(core.PRESET_PACKS.map(pack => pack.name), core.PRESET_CATEGORIES.map(cat => cat.label));
+  // PRESET_PACKS covers the static library only; the runtime cloned_styles
+  // category carries no PresetDefs and is served by list_cloned_styles.
+  assert.deepEqual(core.PRESET_PACKS.map(pack => pack.name), core.PRESET_CATEGORIES.filter(cat => cat.presets !== "dynamic").map(cat => cat.label));
   assert.deepEqual(core.PRESET_PACKS.map(pack => pack.presets.length), [5, 5, 5, 5, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10]);
   const all = core.PRESET_PACKS.flatMap(pack => pack.presets);
   assert.deepEqual(all, core.PRESET_DEFS);

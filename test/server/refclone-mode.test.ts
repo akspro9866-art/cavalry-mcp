@@ -6,7 +6,14 @@ import { createServer } from "../../src/index.js";
 
 const REFCLONE = ["refclone_inspect_reference", "refclone_get_preset_signatures", "refclone_compile_and_converge"].sort();
 const STRICT_DSL = ["cavalry_exec_mg", "cavalry_query_presets", "cavalry_inspect_rig", "cavalry_clone_beat"].sort();
-const COMPACT = ["cavalry_apply_dsl", "cavalry_search_presets", "cavalry_inspect_compact"].sort();
+const COMPACT = [
+  "cavalry_apply_dsl",
+  "cavalry_search_presets",
+  "cavalry_inspect_compact",
+  "list_cloned_styles",
+  "instantiate_cloned_style",
+  "sync_active_comp_to_cloned_style",
+].sort();
 const CRUD = [
   ...COMPACT, "cavalry_run_script", "cavalry_inspect", "cavalry_run_preset", "cavalry_batch",
   "cavalry_verify_frames", "cavalry_render_frames", "cavalry_probe_api", "cavalry_doctor",

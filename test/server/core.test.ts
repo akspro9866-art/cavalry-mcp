@@ -40,7 +40,7 @@ function text(result: ToolResult): string {
 test("default MCP surface is the compact promoted tool set", async () => {
   const listed = await client.listTools();
   // This file opts into CAVALRY_MCP_LEGACY_CRUD, so the listed surface is the
-  // granular set PLUS the three compact tools every surface carries.
+  // granular set PLUS the compact tools every surface carries.
   assert.deepEqual(listed.tools.map(tool => tool.name).sort(), [
     "cavalry_apply_dsl",
     "cavalry_batch",
@@ -53,6 +53,9 @@ test("default MCP surface is the compact promoted tool set", async () => {
     "cavalry_run_script",
     "cavalry_search_presets",
     "cavalry_verify_frames",
+    "instantiate_cloned_style",
+    "list_cloned_styles",
+    "sync_active_comp_to_cloned_style",
   ]);
   for (const tool of listed.tools) {
     assert.ok((tool.description ?? "").trim().split(/\s+/).length < 40, `${tool.name} description is too long`);

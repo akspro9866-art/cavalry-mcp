@@ -531,6 +531,62 @@ export async function runBatchInspect(
   }
 }
 
+/** Reshaped `/export_comp_rig_overrides` envelope (see stallion's ExportCompRigOverrides.ts). */
+export interface ExportCompRigOverridesResponse {
+  ok: boolean;
+  kind?: string;
+  seq?: unknown;
+  compId?: string;
+  frame?: number;
+  compFrameRate?: number | null;
+  compResolution?: [number, number] | null;
+  compEndFrame?: number | null;
+  layers?: Array<{
+    id: string;
+    name: string;
+    type: string;
+    parent?: string | null;
+    hidden?: boolean;
+    attrs?: Record<string, unknown>;
+    animated?: string[];
+  }>;
+  layerCount?: number;
+  error?: string;
+  code?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Bounded procedural/visual attribute readback for reverse preset sync. Reads
+ * one state snapshot — no playhead scrub — and returns spring/oscillator/
+ * sub-mesh/color/font knobs per layer so a manual UI pass can be folded back
+ * into `presets/cloned/<style>.json`.
+ */
+export async function runExportCompRigOverrides(
+  request: { compId?: string; layerIds?: string[]; attributes?: string[] } = {},
+  config: StallionConfig = CONFIG,
+  opts?: { timeoutMs?: number; httpTimeoutMs?: number },
+): Promise<ExportCompRigOverridesResponse> {
+  const seq = randomUUID();
+  const payload: Record<string, unknown> = { type: "export_comp_rig_overrides", seq };
+  for (const key of ["compId", "layerIds", "attributes"] as const) {
+    const value = request[key];
+    if (value !== undefined) payload[key] = value;
+  }
+  const raw = await enqueue(async () => {
+    await postRaw(payload, config, opts?.httpTimeoutMs);
+    return waitForKind(config, seq, "export_comp_rig_overrides", opts?.timeoutMs ?? Math.max(config.resultTimeoutMs, 30_000));
+  });
+  if (!raw) {
+    return { ok: false, kind: "export_comp_rig_overrides", seq, error: "No export_comp_rig_overrides result from Stallion — rebuild and relaunch the bridge (v0.11.0+)." };
+  }
+  try {
+    return JSON.parse(raw) as ExportCompRigOverridesResponse;
+  } catch {
+    return { ok: false, kind: "export_comp_rig_overrides", seq, error: `Unparsable export_comp_rig_overrides result: ${raw.slice(0, 500)}` };
+  }
+}
+
 /** Serialize scene state under a `snapshotId` (in-memory on the bridge + fast temp copy). */
 export async function runCheckpoint(
   request: { snapshotId?: string; layerIds?: string[]; compId?: string } = {},

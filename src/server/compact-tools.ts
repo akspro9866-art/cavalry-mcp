@@ -1,5 +1,6 @@
 /**
- * The compact tool surface: exactly three tools for external agents.
+ * The compact tool surface for external agents: three scene tools plus the
+ * two runtime cloned-style tools registered at the end (five total).
  *
  * Everything verbose lives behind them:
  *   - scene state never returns as a JSON DOM dump — `cavalry_inspect_compact`
@@ -21,6 +22,7 @@ import { PRESET_CATEGORIES } from "../presets/types.js";
 import { compileMgDsl, type MgDslManifest } from "../runtime/mg_manifest.js";
 import { runBatchStep, runReadback, type BatchStepResponse } from "../bridge/stallion.js";
 import { resolvePreset, searchPresets, serializeCompactTsv, type CompactTsvLayer } from "../lib/index.js";
+import { registerClonedTools } from "./cloned-tools.js";
 
 function textResult(text: string, isError = false) {
   return isError
@@ -217,4 +219,9 @@ export function registerCompactTools(server: McpServer): void {
       }
     },
   );
+
+  // -------------------------------------------------------------------------
+  // Runtime cloned styles (refclone Stage 6) — zero-rebuild filesystem reads
+  // -------------------------------------------------------------------------
+  registerClonedTools(server);
 }
