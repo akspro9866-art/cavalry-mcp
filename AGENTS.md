@@ -1,5 +1,9 @@
 # Cavalry agent rules
 
+## SaaS reference video intake
+
+[`.qoder/rules/saas-video-intake.md`](.qoder/rules/saas-video-intake.md) is always on. When a chat supplies 5–10 video paths without a build request, load [`.qoder/skills/saas-reference-analyzer/SKILL.md`](.qoder/skills/saas-reference-analyzer/SKILL.md) and run the analysis-only pipeline. The skill maps styles to this repository's generated `dist/presets/preset_manifest.json`; run `npm run build:manifest` if it is missing. Never invoke `refclone` clone/build/render commands or any `stallion` command. If any input is not SaaS UI content, abort the batch and print only: "This library is SaaS-only. Remove non-SaaS video and retry."
+
 - Never loop single-action MCP or HTTP calls. Batch scene work into one `cavalry_run_script` or `node bin/stallion-cli.mjs -e "..."` execution.
 - Always prefer `_mg.*` helpers and procedural Cavalry nodes (`duplicator`, `subMesh`, `stagger`, `noise`, `oscillator`, `magicEasing`) over per-layer keyframe spam.
 - Return a compact value from scripts. Use `cavalry_inspect` for selection/root IDs; never dump the scene graph.
