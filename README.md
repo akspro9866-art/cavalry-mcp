@@ -1,6 +1,8 @@
 # cavalry-mcp
 
 ![CI](https://github.com/akspro9866-art/cavalry-mcp/actions/workflows/ci.yml/badge.svg)
+![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
+![Node.js >= 18.17](https://img.shields.io/badge/Node.js-%3E%3D18.17-339933?logo=node.js&logoColor=white)
 
 Low-token [Cavalry](https://cavalry.scenegroup.co) automation through
 [Stallion](https://github.com/akspro9866-art/stallion). Build whole motion rigs in one atomic
@@ -23,6 +25,50 @@ This repository is the middle layer of a three-part stack:
 | `refclone-cli` | [akspro9866-art/refclone](https://github.com/akspro9866-art/refclone) | evidence-gated video-to-Cavalry pipeline; optional consumer of this server |
 | **`cavalry-mcp`** | **this repository** | MCP server, `_mg` runtime, presets, and the zero-MCP `stallion` CLI |
 | Stallion | [akspro9866-art/stallion](https://github.com/akspro9866-art/stallion) | Cavalry extension that exposes the script host over HTTP |
+
+---
+
+## What it does in 20 seconds
+
+cavalry-mcp turns an MCP client or a plain terminal into a motion designer:
+one schema-checked call builds a whole rig in a single atomic Undo group,
+120 procedural presets cover the common motion vocabulary, and the
+render/verify/readback loops return pixels and geometry instead of making
+the agent pay a one-second round trip per attribute.
+
+## Quickstart (5 minutes)
+
+Prerequisites: Node.js >= 18.17. Cavalry 2.8 with the Stallion bridge enabled
+is only needed for live calls — the test suite runs headless.
+
+```bash
+git clone https://github.com/akspro9866-art/cavalry-mcp.git
+cd cavalry-mcp
+npm ci
+npm run build
+npm test
+```
+
+Minimal MCP client config (the same shape as
+[Connect an MCP client](#connect-an-mcp-client)):
+
+```json
+{
+  "mcpServers": {
+    "cavalry": {
+      "command": "node",
+      "args": ["C:/Users/<you>/tools/cavalry-mcp/dist/index.js"]
+    }
+  }
+}
+```
+
+First tool call — `cavalry_doctor` answers bridge, runtime and binary checks
+even when Cavalry is not running:
+
+```json
+{ "tool": "cavalry_doctor", "arguments": {} }
+```
 
 ---
 
