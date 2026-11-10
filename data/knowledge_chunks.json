@@ -1,0 +1,267 @@
+[
+  {
+    "id": "attr-paths-2.8",
+    "title": "Cavalry 2.7+ / 2.8+ Verified Attribute Paths & Deprecations",
+    "category": "attributes",
+    "context": "script",
+    "content": "In Cavalry 2.7+ and 2.8+, shape and text fills live at 'material.materialColor' (not 'fill.color') and alpha lives at 'material.alpha' (setting 'material: false' is a no-op; use 'material.alpha: 0' for stroke-only shapes). Rectangle primitives use 'generator.dimensions' [w, h] and 'generator.cornerRadius', whereas ellipse primitives have no dimensions attribute and use 'generator.radius' [rx, ry]. Text layers expose 'fontSize' at the top level ('text.fontSize' returns the text object). Layer display names are read via 'api.getNiceName(id)' ('api.getName' does not exist). Compound attributes (position, scale, rotation, generator.dimensions, generator.size, generator.count, generator.radius, material.materialColor, strokeColor, glowColor, font) must each be written in their own api.set() call.",
+    "attributes": [
+      "material.materialColor",
+      "material.alpha",
+      "material.shader",
+      "generator.dimensions",
+      "generator.cornerRadius",
+      "generator.radius",
+      "fontSize",
+      "lineSpacing",
+      "letterSpacing",
+      "horizontalAlignment",
+      "verticalAlignment"
+    ],
+    "deprecatedAliases": {
+      "fill.color": "material.materialColor",
+      "fillColor": "material.materialColor",
+      "fill.alpha": "material.alpha",
+      "fill.opacity": "material.alpha",
+      "text.fontSize": "fontSize",
+      "lineHeight": "lineSpacing",
+      "tracking": "letterSpacing",
+      "cornerRadius": "generator.cornerRadius",
+      "dimensions": "generator.dimensions",
+      "api.getName": "api.getNiceName"
+    },
+    "tags": ["attributes", "2.8", "materialColor", "deprecated", "ellipse", "rectangle", "textShape", "compound"]
+  },
+  {
+    "id": "stroke-material-2.8",
+    "title": "Stroke Material & Dash Pattern Serialization",
+    "category": "materials",
+    "context": "script",
+    "content": "Cavalry stroke styling can be attached via a 'strokeMaterial' node connected to a shape's 'stroke' port (api.connect(strokeId, 'id', shapeId, 'stroke')). Key attributes include 'width', 'strokeColor', 'capStyle' (0=Flat, 1=Round, 2=Projecting), 'joinStyle', 'trimStart', 'trimEnd', and 'trimOffset'. CRITICAL: In Cavalry 2.8, 'dashPattern' MUST be serialized as a comma-separated string (e.g. '10,8'), never a numeric array, or the bridge throws json.exception.type_error.302.",
+    "attributes": [
+      "width",
+      "strokeColor",
+      "capStyle",
+      "joinStyle",
+      "dashPattern",
+      "trimStart",
+      "trimEnd",
+      "trimOffset"
+    ],
+    "deprecatedAliases": {
+      "stroke.width": "width",
+      "stroke.color": "strokeColor",
+      "stroke.dash": "dashPattern"
+    },
+    "tags": ["strokeMaterial", "dashPattern", "trim", "capStyle", "stroke"]
+  },
+  {
+    "id": "magic-easing-spring",
+    "title": "Magic Easing & Spring Out Curves",
+    "category": "animation",
+    "context": "script",
+    "content": "Cavalry's 'api.magicEasing(layerId, attrPath, frame, easingName)' sets outgoing curve shapes on keyframes without manual tangent handles. Valid canonical names: 'SlowIn', 'SlowOut', 'SlowInSlowOut', 'VerySlowIn', 'VerySlowOut', 'VerySlowInVerySlowOut', 'SpringIn', 'SpringOut', 'SpringInSpringOut', 'SmallSpringIn', 'SmallSpringOut', 'SmallSpringInSmallSpringOut', 'AnticipateIn', 'OvershootOut', 'AnticipateInOvershootOut', 'BounceIn', 'BounceOut', 'BounceInBounceOut', 'None', 'Custom'. For tactile SaaS UI motion, 'SpringOut' and 'OvershootOut' provide organic settling without hand-keyed oscillations.",
+    "attributes": ["magicEasing"],
+    "deprecatedAliases": {
+      "Linear": "None",
+      "QuartOut": "SlowOut",
+      "QuintOut": "VerySlowOut",
+      "ExpoOut": "VerySlowOut",
+      "BackOut": "OvershootOut"
+    },
+    "tags": ["magicEasing", "SpringOut", "OvershootOut", "easing", "keyframes", "spring"]
+  },
+  {
+    "id": "spring-modifier",
+    "title": "Spring Modifier & Damped Harmonic Oscillator Physics",
+    "category": "modifiers",
+    "context": "modifier",
+    "content": "The Spring Modifier ('springModifier') and damped harmonic oscillator math model second-order spring physics: omega0 = sqrt(stiffness / mass), dampingRatio zeta = damping / (2 * sqrt(stiffness * mass)), damped frequency omegaD = omega0 * sqrt(1 - zeta^2), and response x(t) = target - exp(-zeta * omega0 * t) * (cos(omegaD * t) + (zeta * omega0 / omegaD) * sin(omegaD * t)) * (target - initial). Settling time T_settle is approximated by -ln(tolerance) / (zeta * omega0). Can be wired via native 'springModifier' or sampled deterministically into keyframes via _mg.springPhysics / _mg.modulate.",
+    "attributes": ["stiffness", "damping", "mass", "strength"],
+    "deprecatedAliases": {
+      "tension": "stiffness",
+      "friction": "damping"
+    },
+    "tags": ["springModifier", "spring", "physics", "stiffness", "damping", "mass", "harmonic"]
+  },
+  {
+    "id": "duplicator-distributions",
+    "title": "Duplicator & Distribution Generators",
+    "category": "duplicators",
+    "context": "script",
+    "content": "The 'duplicator' node replicates input shapes connected to its 'shapes' port. Switch distribution via api.setGenerator(dupId, 'generator', distType) where distType is 'linearDistribution', 'gridDistribution', 'circleDistribution', 'meshDistribution', or 'pointDistribution'. IMPORTANT: 'linearDistribution' takes scalar 'generator.count' and 'generator.size', whereas 'gridDistribution' takes [cols, rows] and [width, height] vector arrays. Hide the source shape ('hidden: true') so only duplicates render. Connect a 'stagger' node to 'shapeTimeOffset' to cascade animations across clones.",
+    "attributes": [
+      "shapes",
+      "generator.count",
+      "generator.size",
+      "generator.direction",
+      "generator.radius",
+      "shapeTimeOffset",
+      "deformers",
+      "subMesh"
+    ],
+    "deprecatedAliases": {
+      "count": "generator.count",
+      "size": "generator.size"
+    },
+    "tags": ["duplicator", "linearDistribution", "gridDistribution", "meshDistribution", "stagger", "shapeTimeOffset"]
+  },
+  {
+    "id": "falloff-proximity-field",
+    "title": "Falloff Node & Proximity Field Modulation",
+    "category": "falloffs",
+    "context": "deformer",
+    "content": "The 'falloff' node attenuates deformers, behaviours, and duplicator transforms based on spatial distance from an effector (equivalent to Blender Geometry Nodes Proximity + Map Range Field Falloff). Connect falloff.id to a deformer or modifier's 'falloffs' port. Key attributes: 'size' [w, h], 'strength' (default 100), 'shapeType' (0=Circle/Radial, 1=Linear, 2=torus), 'invert', and graph curve remapping. Moving the falloff layer in composition space creates real-time proximity-driven scaling, rotation, or displacement waves.",
+    "attributes": ["size", "strength", "shapeType", "pathMode", "angles", "repetitions", "seed", "falloffs"],
+    "deprecatedAliases": {
+      "falloffRadius": "size",
+      "influence": "strength"
+    },
+    "tags": ["falloff", "proximity", "field", "effector", "blender", "duplicator", "subMesh"]
+  },
+  {
+    "id": "submesh-deformer",
+    "title": "Sub-Mesh Deformer for Text & Compound Shapes",
+    "category": "deformers",
+    "context": "deformer",
+    "content": "The 'subMesh' deformer manipulates sub-elements of a 'textShape' or multi-contour shape independently. 'levelMode' controls granularity on text: 0 = Characters, 1 = Words, 2 = Lines. Connect a 'stagger' node to 'subMesh.shapeTimeOffset' and a 'falloff' node to 'subMesh.falloffs' to drive character/word/line cascades, scale pops, and positional reveals.",
+    "attributes": ["levelMode", "shapeTimeOffset", "position", "scale", "rotation", "opacity", "falloffs"],
+    "deprecatedAliases": {
+      "textLevel": "levelMode",
+      "timeOffset": "shapeTimeOffset"
+    },
+    "tags": ["subMesh", "textShape", "characters", "words", "lines", "stagger", "deformer"]
+  },
+  {
+    "id": "align-deformer-9point",
+    "title": "Align Deformer & 9-Point Anchor Grid",
+    "category": "deformers",
+    "context": "deformer",
+    "content": "The 'align' deformer pins a shape or text layer's geometry relative to its pivot origin across a [-1, 1] normalized 9-point grid (Rectangulator pattern). NOTE: Cavalry's native 'align.x' sign is inverted (+1 pins the left edge, -1 pins the right edge, +1 on y pins the bottom edge, -1 on y pins the top edge). Using _rb.anchor(id, ax, ay) normalizes this so ax=-1 is left, ax=0 is center, ax=1 is right, ay=-1 is top, ay=0 is middle, ay=1 is bottom.",
+    "attributes": ["x", "y", "deformers"],
+    "deprecatedAliases": {
+      "anchorPoint": "align"
+    },
+    "tags": ["align", "anchor", "pivot", "9-point", "rectangulator", "deformer"]
+  },
+  {
+    "id": "noise-deformer-modifier",
+    "title": "Noise Modifier & Simplex/Perlin Deformer",
+    "category": "modifiers",
+    "context": "modifier",
+    "content": "The 'noise' node generates procedural Perlin/Simplex/Value noise to drive layer attributes or deform mesh vertices. Key attributes: 'strength' (amplitude), 'generator.frequency', 'generator.timeScale', 'generator.seed', 'generator.octaves', 'generator.lacunarity', 'generator.gain', 'strengthToZero'. Wire 'noise.id' to 'position.x', 'position.y', 'rotation', or 'scale' for organic camera shake and floating SaaS cards.",
+    "attributes": [
+      "strength",
+      "generator.frequency",
+      "generator.timeScale",
+      "generator.seed",
+      "generator.octaves",
+      "generator.lacunarity",
+      "generator.gain",
+      "strengthToZero"
+    ],
+    "deprecatedAliases": {
+      "frequency": "generator.frequency",
+      "seed": "generator.seed"
+    },
+    "tags": ["noise", "simplex", "perlin", "organicFloat", "modifier", "deformer"]
+  },
+  {
+    "id": "value-blend-parent",
+    "title": "Value Blend, Transform Constraint & Weighted Parent Blending",
+    "category": "constraints",
+    "context": "modifier",
+    "content": "Cavalry's 'valueBlend' and 'transformConstraint' nodes blend scalar or vector attributes between two or more parent sources using a normalized weight (0..1 or 0..100%), implementing the Parent-o-bot pattern. Connect Parent A and Parent B positions/rotations/scales into a blend network or dynamic controller null to smoothly hand off a child layer from one coordinate space to another.",
+    "attributes": ["weight", "blend", "position", "rotation", "scale", "opacity"],
+    "deprecatedAliases": {
+      "parentConstraint": "transformConstraint"
+    },
+    "tags": ["valueBlend", "transformConstraint", "parent", "blend", "constraint", "parent-o-bot"]
+  },
+  {
+    "id": "sksl-shaders-filters",
+    "title": "SkSL Shaders, Gradients, Image Shaders & Mipmaps",
+    "category": "shaders",
+    "context": "render",
+    "content": "Cavalry uses Google Skia's SkSL shading language for 'skslShader' (connected to 'material.shader') and 'skslFilter' (connected to 'filters'). Built-in shaders include 'linearGradient' (color stops, angle, start/end points) and 'imageShader' (bitmap textures). For 3D/camera moves, set 'filterQuality: 3' (High + Mipmaps) on all 'imageShader' nodes to prevent moiré and aliasing. Built-in filters include 'glowFilter', 'dropShadowFilter', 'gaussianBlurFilter', and 'grainFilter'.",
+    "attributes": [
+      "material.shader",
+      "filters",
+      "filterQuality",
+      "glowColor",
+      "blur",
+      "intensity",
+      "shadowRadius",
+      "shadowOffsetX",
+      "shadowOffsetY",
+      "shadowColor",
+      "shadowOpacity"
+    ],
+    "deprecatedAliases": {
+      "mipmap": "filterQuality",
+      "shader": "material.shader"
+    },
+    "tags": ["sksl", "shader", "linearGradient", "imageShader", "mipmap", "filterQuality", "glowFilter", "dropShadowFilter"]
+  },
+  {
+    "id": "js-contexts-8",
+    "title": "Cavalry 8 JavaScript Execution Contexts",
+    "category": "javascript",
+    "context": "script",
+    "content": "Cavalry supports 8 distinct JavaScript execution contexts: (1) 'script' — UI/MCP automation scripts with full 'api.*' and 'cavalry.*' access and undo groups; (2) 'plugin' — persistent dockable UI Window plugins; (3) 'render' — pre/post render queue hooks; (4) 'shape' — JavaScript Shape node generating procedural 'cavalry.Path' geometry per frame; (5) 'utility' — JavaScript Utility node computing scalar/vector/string outputs; (6) 'deformer' — custom point-level mesh deformation; (7) 'emitter' — particle emission rules; (8) 'modifier' — custom value modulation with 'ctx.index', 'ctx.count', 'ctx.time', and 'ctx.frame'.",
+    "attributes": ["api", "cavalry", "ctx"],
+    "deprecatedAliases": {},
+    "tags": ["javascript", "contexts", "script", "plugin", "render", "shape", "utility", "deformer", "emitter", "modifier"]
+  },
+  {
+    "id": "forge-dynamics-soft-cells",
+    "title": "Forge Dynamics & Soft-Body Collision Rigs",
+    "category": "physics",
+    "context": "deformer",
+    "content": "Forge Dynamics ('forgeDynamics') provides 2D rigid-body and soft-body physics inside Cavalry, supporting collision shapes, gravity, restitution, friction, and attractors. For soft-body bento grids and tactile floating clusters (Soft-Cells pattern), combine proximity-driven scaling, spring relaxation, and area-preserving squash-and-stretch (scaleY = 1 / scaleX) on Duplicator children.",
+    "attributes": ["gravity", "bounciness", "friction", "density", "collisionMargin"],
+    "deprecatedAliases": {},
+    "tags": ["forgeDynamics", "physics", "soft-cells", "collision", "bento", "duplicator"]
+  },
+  {
+    "id": "marker-sync-cascades",
+    "title": "Timeline Marker Sync & Beat-Driven Cascades",
+    "category": "audio",
+    "context": "script",
+    "content": "Marker Sync ('markerSync') reads composition timeline markers or audio onset frame arrays and maps them to 'valueArray' / 'stagger' / 'duplicator' time offsets. Use '_mg.syncToFrames(frames, spec)' or the 'marker_sync_cascade' preset to trigger non-linear cascades, scale pulses, and counter steps locked to exact musical beats.",
+    "attributes": ["shapeTimeOffset", "offset", "generator.count"],
+    "deprecatedAliases": {},
+    "tags": ["markerSync", "beats", "audio", "syncToFrames", "cascade", "timeline"]
+  },
+  {
+    "id": "string-generator-localiser",
+    "title": "String Generator, Auto-Sizing Pills & CSV Localization",
+    "category": "typography",
+    "context": "script",
+    "content": "The 'stringGenerator' node formats live numbers ('generator.number', 'generator.precision', 'prefix', 'suffix', 'generator.delimiter') and connects to 'textShape.text'. For auto-sizing pills (SubtitleForge / Localiser pattern), measure 'api.getBoundingBox(textId, false)' after setting text and size the backing 'basicShape' rectangle to [bbox.width + padX * 2, bbox.height + padY * 2] while compensating for intrinsic text baseline offsets.",
+    "attributes": [
+      "generator.number",
+      "generator.precision",
+      "generator.length",
+      "generator.delimiter",
+      "prefix",
+      "suffix",
+      "text"
+    ],
+    "deprecatedAliases": {
+      "precision": "generator.precision",
+      "number": "generator.number"
+    },
+    "tags": ["stringGenerator", "counter", "localiser", "pill", "boundingBox", "textShape"]
+  },
+  {
+    "id": "lottie-export-verification",
+    "title": "Lottie Export & Vector Purity Verification",
+    "category": "export",
+    "context": "render",
+    "content": "Cavalry exports vector animations to Lottie JSON ('v', 'fr', 'ip', 'op', 'w', 'h', 'layers', 'assets'). Lottie supports vector shapes, fills, strokes, trim paths, parenting, and keyframed transforms, but raster filters ('glowFilter', 'gaussianBlurFilter', 'dropShadowFilter', 'grainFilter', 'skslFilter', 'imageShader') either rasterize to embedded PNG assets or fail strict vector verification. Always verify exported Lottie JSON structure, frame rate, non-empty layer array, and raster warnings.",
+    "attributes": ["fps", "resolution", "startFrame", "endFrame"],
+    "deprecatedAliases": {},
+    "tags": ["lottie", "export", "render", "verification", "vector", "json"]
+  }
+]

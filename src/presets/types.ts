@@ -16,6 +16,7 @@ export type PresetCategoryId =  | "typography"
   | "voice_audio_video"
   | "onboarding_plg"
   | "social_proof_cta"
+  | "procedural_saas"
   /** Runtime filesystem-backed presets (refclone Stage 6); never statically imported. */
   | "cloned_styles";
 
@@ -40,6 +41,7 @@ export const PRESET_CATEGORIES: PresetCategory[] = [
   { id: "voice_audio_video", label: "Voice, Audio & Video", presets: "91-100" },
   { id: "onboarding_plg", label: "Onboarding & Product-Led Growth", presets: "101-110" },
   { id: "social_proof_cta", label: "Social Proof & Call-to-Action", presets: "111-120" },
+  { id: "procedural_saas", label: "Procedural SaaS Rigs & Physics", presets: "121-125" },
   { id: "cloned_styles", label: "Cloned Styles (runtime)", presets: "dynamic" },
 ];
 

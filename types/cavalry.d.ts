@@ -1,3 +1,5 @@
+/// <reference path="./cavalry-contexts.d.ts" />
+
 type CavalryAttributes = Record<string, unknown>;
 type CavalryKeyframe = [frame: number, value: unknown];
 
@@ -60,9 +62,25 @@ interface CavalryAPI {
   // --- playhead and evaluation ---
   getFrame(): number;
   setFrame(frame: number): void;
-  /** world=true returns the world-space box with centre. */
-  getBoundingBox(id: string, world?: boolean): { x: number; y: number; width: number; height: number; centre?: { x: number; y: number } } | null;
+  /** world=true returns the world-space box with centre and edges. */
+  getBoundingBox(
+    id: string,
+    world?: boolean,
+  ): {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    centre?: { x: number; y: number };
+    left?: number;
+    right?: number;
+    top?: number;
+    bottom?: number;
+  } | null;
   getPivotPosition(id: string): { x: number; y: number };
+  // --- dynamic attributes ---
+  addDynamic(id: string, type: string, name: string, fancyName?: boolean): string;
+  addDynamicAttribute(id: string, type: string, name: string, defaultValue?: unknown): string;
   // --- introspection ---
   getChildren(id: string): string[];
   getAnimatedAttributes(id: string): string[];

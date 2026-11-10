@@ -11,8 +11,37 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { executeMotionScript, type ScriptOutcome } from "../runtime/execute.js";
 import { getConfig, type StallionConfig } from "../bridge/stallion.js";
+
+export interface KnowledgeChunk {
+  id: string;
+  title: string;
+  category: string;
+  context: string;
+  content: string;
+  attributes: string[];
+  deprecatedAliases: Record<string, string>;
+  tags: string[];
+}
+
+export interface ApiSignatureParam {
+  name: string;
+  type: string;
+  description: string;
+}
+
+export interface ApiSignatureEntry {
+  name: string;
+  signature: string;
+  context: string[];
+  params: ApiSignatureParam[];
+  returns: string;
+  description: string;
+  example: string;
+  deprecated: boolean;
+}
 
 export interface ProbeInput {
   /** Layer ids whose full attribute list should be read (max 20). */
@@ -27,6 +56,10 @@ export interface ProbeInput {
   inlineSurface?: boolean;
   /** Report path (default `~/.cavalry-mcp/cavalry-api-capabilities.json`). */
   writeFile?: string;
+  /** Optional offline documentation and API reference search query. */
+  query?: string;
+  /** When true and `query` is provided, return offline docs without calling the live bridge. */
+  offlineOnly?: boolean;
 }
 
 export interface ProbeAttributeSample {
@@ -55,6 +88,165 @@ export interface ProbeResult extends Omit<ProbeReport, "surface" | "attributeSam
   missing: string[];
   surface: string[] | null;
   attributeSamples: Array<Omit<ProbeAttributeSample, "attributes">>;
+  offlineDocs?: KnowledgeChunk[];
+  apiSignatures?: ApiSignatureEntry[];
+}
+
+let cachedKnowledgeChunks: KnowledgeChunk[] | null = null;
+let cachedApiReference: ApiSignatureEntry[] | null = null;
+
+function dataFilePath(fileName: string): string {
+  return fileURLToPath(new URL(`../../data/${fileName}`, import.meta.url));
+}
+
+export function loadKnowledgeChunks(): KnowledgeChunk[] {
+  if (!cachedKnowledgeChunks) {
+    const raw = fs.readFileSync(dataFilePath("knowledge_chunks.json"), "utf8");
+    cachedKnowledgeChunks = JSON.parse(raw) as KnowledgeChunk[];
+  }
+  return cachedKnowledgeChunks;
+}
+
+export function loadApiReference(): ApiSignatureEntry[] {
+  if (!cachedApiReference) {
+    const raw = fs.readFileSync(dataFilePath("api_reference.json"), "utf8");
+    cachedApiReference = JSON.parse(raw) as ApiSignatureEntry[];
+  }
+  return cachedApiReference;
+}
+
+/**
+ * Search the offline Cavalry 2.7+/2.8+ Knowledge Base (`data/knowledge_chunks.json`)
+ * across titles, content, attribute paths, deprecated aliases, categories, and tags.
+ */
+export function searchOfflineDocs(
+  query: string,
+  options: { category?: string; context?: string; limit?: number } = {},
+): KnowledgeChunk[] {
+  const chunks = loadKnowledgeChunks();
+  const limit = Math.max(1, Math.min(50, options.limit ?? 10));
+  const categoryFilter = options.category?.trim().toLowerCase();
+  const contextFilter = options.context?.trim().toLowerCase();
+  const tokens = String(query ?? "")
+    .toLowerCase()
+    .split(/[\s,;|/]+/)
+    .map(t => t.trim())
+    .filter(Boolean);
+
+  const scored: Array<{ chunk: KnowledgeChunk; score: number }> = [];
+  for (const chunk of chunks) {
+    if (categoryFilter && chunk.category.toLowerCase() !== categoryFilter) continue;
+    if (contextFilter && chunk.context.toLowerCase() !== contextFilter) continue;
+    if (tokens.length === 0) {
+      scored.push({ chunk, score: 1 });
+      continue;
+    }
+    const haystack = [
+      chunk.id,
+      chunk.title,
+      chunk.category,
+      chunk.context,
+      chunk.content,
+      ...chunk.attributes,
+      ...Object.keys(chunk.deprecatedAliases ?? {}),
+      ...Object.values(chunk.deprecatedAliases ?? {}),
+      ...chunk.tags,
+    ]
+      .join(" ")
+      .toLowerCase();
+
+    let score = 0;
+    for (const token of tokens) {
+      if (chunk.id.toLowerCase().includes(token)) score += 6;
+      if (chunk.title.toLowerCase().includes(token)) score += 5;
+      if (chunk.tags.some(t => t.toLowerCase().includes(token))) score += 4;
+      if (chunk.attributes.some(a => a.toLowerCase().includes(token))) score += 4;
+      if (Object.keys(chunk.deprecatedAliases ?? {}).some(k => k.toLowerCase().includes(token))) score += 5;
+      if (haystack.includes(token)) score += 2;
+    }
+    if (score > 0) scored.push({ chunk, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit).map(entry => entry.chunk);
+}
+
+/**
+ * Look up an API signature or search matching signatures from `data/api_reference.json`.
+ */
+export function lookupApiSignature(nameOrQuery: string): ApiSignatureEntry | null {
+  const entries = loadApiReference();
+  const q = String(nameOrQuery ?? "").trim().toLowerCase();
+  if (!q) return null;
+  const normalized = q.startsWith("api.") || q.startsWith("cavalry.") || q.startsWith("ctx.") ? q : `api.${q}`;
+  const exact = entries.find(
+    entry => entry.name.toLowerCase() === q || entry.name.toLowerCase() === normalized,
+  );
+  if (exact) return exact;
+  return (
+    entries.find(
+      entry =>
+        entry.name.toLowerCase().includes(q) ||
+        entry.signature.toLowerCase().includes(q) ||
+        entry.description.toLowerCase().includes(q),
+    ) ?? null
+  );
+}
+
+/** Search multiple API signatures matching a query string. */
+export function searchApiSignatures(query: string, limit = 8): ApiSignatureEntry[] {
+  const entries = loadApiReference();
+  const tokens = String(query ?? "")
+    .toLowerCase()
+    .split(/[\s,;|/]+/)
+    .map(t => t.trim())
+    .filter(Boolean);
+  if (!tokens.length) return entries.slice(0, limit);
+  const scored: Array<{ entry: ApiSignatureEntry; score: number }> = [];
+  for (const entry of entries) {
+    let score = 0;
+    const text = `${entry.name} ${entry.signature} ${entry.description} ${entry.context.join(" ")}`.toLowerCase();
+    for (const token of tokens) {
+      if (entry.name.toLowerCase() === token || entry.name.toLowerCase() === `api.${token}`) score += 8;
+      else if (entry.name.toLowerCase().includes(token)) score += 4;
+      if (text.includes(token)) score += 2;
+    }
+    if (score > 0) scored.push({ entry, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit).map(s => s.entry);
+}
+
+/**
+ * Resolve deprecated or ambiguous attribute names to verified Cavalry 2.7+/2.8+ canonical paths.
+ */
+export function resolveAttributePath(
+  layerType: string,
+  attrOrDeprecated: string,
+): { canonical: string; deprecated: boolean; note: string } {
+  const type = String(layerType ?? "").trim();
+  const attr = String(attrOrDeprecated ?? "").trim();
+  if (type === "ellipse" && (attr === "generator.dimensions" || attr === "dimensions")) {
+    return {
+      canonical: "generator.radius",
+      deprecated: true,
+      note: "Ellipse primitives in Cavalry 2.8 have no dimensions attribute; use 'generator.radius' as [rx, ry].",
+    };
+  }
+  for (const chunk of loadKnowledgeChunks()) {
+    const mapped = chunk.deprecatedAliases?.[attr];
+    if (mapped) {
+      return {
+        canonical: mapped,
+        deprecated: true,
+        note: `Mapped deprecated '${attr}' to verified 2.8 path '${mapped}' (${chunk.title}).`,
+      };
+    }
+  }
+  return {
+    canonical: attr,
+    deprecated: false,
+    note: "Canonical attribute path.",
+  };
 }
 
 /** Names the clone pipeline depends on; each is answered with a yes or a no. */
@@ -92,11 +284,13 @@ export interface NormalizedProbe {
   functions: string[];
   inlineSurface: boolean;
   writeFile: string;
+  query?: string;
+  offlineOnly?: boolean;
 }
 
 export function normalizeProbe(input: ProbeInput = {}): NormalizedProbe {
   if (input && typeof input !== "object") throw new Error("Probe options must be an object");
-  return {
+  const normalized: NormalizedProbe = {
     layerIds: stringList(input.layerIds, 20),
     sampleTypes: input.sampleTypes !== false,
     includeLayerTypes: input.includeLayerTypes !== false,
@@ -104,6 +298,13 @@ export function normalizeProbe(input: ProbeInput = {}): NormalizedProbe {
     inlineSurface: input.inlineSurface === true,
     writeFile: path.resolve(input.writeFile ?? defaultReportPath()),
   };
+  if (typeof input.query === "string" && input.query.trim()) {
+    normalized.query = input.query.trim();
+  }
+  if (input.offlineOnly === true) {
+    normalized.offlineOnly = true;
+  }
+  return normalized;
 }
 
 export function buildProbeScript(options: NormalizedProbe): string {
@@ -246,6 +447,27 @@ export async function runProbe(
 ): Promise<ProbeResult> {
   const config = opts.config ?? getConfig();
   const options = normalizeProbe(input);
+  const offlineDocs = options.query ? searchOfflineDocs(options.query) : undefined;
+  const apiSignatures = options.query ? searchApiSignatures(options.query) : undefined;
+
+  if (options.offlineOnly && options.query) {
+    return {
+      generatedAt: new Date().toISOString(),
+      comp: { id: null, name: null, fps: null, width: null, height: null, startFrame: null, endFrame: null },
+      apiFunctionCount: 0,
+      capabilities: {},
+      layerTypes: null,
+      present: [],
+      missing: [],
+      surface: null,
+      attributeSamples: [],
+      file: options.writeFile,
+      warnings: [],
+      offlineDocs,
+      apiSignatures,
+    };
+  }
+
   const execute = opts.execute ?? (async (code: string) => executeMotionScript(code, config, { helpers: false }));
   const outcome = await execute(buildProbeScript(options));
   if (!outcome.ok) throw new Error(`API probe failed: ${outcome.text}`);
@@ -284,5 +506,195 @@ export async function runProbe(
     })),
     file: options.writeFile,
     warnings: report.warnings,
+    ...(offlineDocs ? { offlineDocs } : {}),
+    ...(apiSignatures ? { apiSignatures } : {}),
   };
 }
+
+export interface BoundingBoxResult {
+  layerId: string;
+  worldSpace: boolean;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  centre: { x: number; y: number };
+}
+
+/**
+ * Helper adapted from `kacperchlebowicz/Cavalry-mcp`: queries `api.getBoundingBox(layerId, worldSpace)`
+ * cleanly and normalizes centre/min-corner coordinates.
+ */
+export async function getBoundingBoxHelper(
+  layerId: string,
+  worldSpace = true,
+  opts: {
+    config?: StallionConfig;
+    execute?: (code: string) => Promise<ScriptOutcome>;
+  } = {},
+): Promise<BoundingBoxResult> {
+  if (!layerId || typeof layerId !== "string") {
+    throw new Error("getBoundingBoxHelper requires a non-empty layerId");
+  }
+  const config = opts.config ?? getConfig();
+  const execute = opts.execute ?? (async (code: string) => executeMotionScript(code, config, { helpers: false }));
+  const script = `
+const __id = ${JSON.stringify(layerId)};
+const __ws = ${JSON.stringify(Boolean(worldSpace))};
+const bb = api.getBoundingBox(__id, __ws);
+if (!bb || typeof bb !== "object") throw new Error("No bounding box for " + __id);
+const num = (v, fb) => { const n = Number(v); return isFinite(n) ? n : fb; };
+const w = Array.isArray(bb) ? num(bb[2], 0) : num(bb.width != null ? bb.width : bb.w, 0);
+const h = Array.isArray(bb) ? num(bb[3], 0) : num(bb.height != null ? bb.height : bb.h, 0);
+const x = Array.isArray(bb) ? num(bb[0], 0) : num(bb.x, 0);
+const y = Array.isArray(bb) ? num(bb[1], 0) : num(bb.y, 0);
+const cx = bb.centre && typeof bb.centre === "object" ? num(bb.centre.x, x + w / 2) : x + w / 2;
+const cy = bb.centre && typeof bb.centre === "object" ? num(bb.centre.y, y + h / 2) : y + h / 2;
+return { layerId: __id, worldSpace: __ws, x, y, width: w, height: h, centre: { x: cx, y: cy } };
+`;
+  const outcome = await execute(script);
+  if (!outcome.ok) throw new Error(`getBoundingBoxHelper failed: ${outcome.text}`);
+  return JSON.parse(outcome.text) as BoundingBoxResult;
+}
+
+export const get_bounding_box = getBoundingBoxHelper;
+
+export interface LottieVerificationOptions {
+  comp?: string;
+  outPath?: string;
+  lottieJson?: string | Record<string, unknown>;
+  config?: StallionConfig;
+  execute?: (code: string) => Promise<ScriptOutcome>;
+}
+
+export interface LottieVerificationResult {
+  ok: boolean;
+  outPath: string | null;
+  version: string | null;
+  fps: number | null;
+  inPoint: number | null;
+  outPoint: number | null;
+  width: number | null;
+  height: number | null;
+  layerCount: number;
+  assetCount: number;
+  rasterEffectsDetected: string[];
+  warnings: string[];
+}
+
+const RASTER_LAYER_TYPES = new Set([
+  "glowFilter",
+  "gaussianBlurFilter",
+  "dropShadowFilter",
+  "grainFilter",
+  "skslFilter",
+  "skslShader",
+  "imageShader",
+]);
+
+/**
+ * Helper adapted from `Kydaix/cavalry-mcp` (`cavalry_render_lottie`):
+ * exports or verifies a native Lottie JSON payload, validating structure (`v`, `fr`, `ip`, `op`, `w`, `h`, `layers`, `assets`)
+ * and checking the scene for unsupported SkSL/raster effects that break pure-vector Lottie playback.
+ */
+export async function renderLottieVerified(
+  options: LottieVerificationOptions = {},
+): Promise<LottieVerificationResult> {
+  const warnings: string[] = [];
+  const rasterEffectsDetected: string[] = [];
+  let parsed: Record<string, unknown> | null = null;
+  const outPath = options.outPath ? path.resolve(options.outPath) : null;
+
+  if (options.lottieJson != null) {
+    parsed =
+      typeof options.lottieJson === "string"
+        ? (JSON.parse(options.lottieJson) as Record<string, unknown>)
+        : options.lottieJson;
+  } else if (outPath && fs.existsSync(outPath)) {
+    parsed = JSON.parse(fs.readFileSync(outPath, "utf8")) as Record<string, unknown>;
+  } else {
+    const config = options.config ?? getConfig();
+    const execute =
+      options.execute ?? (async (code: string) => executeMotionScript(code, config, { helpers: false }));
+    const script = `
+const compId = ${options.comp ? JSON.stringify(options.comp) : "api.getActiveComp()"};
+const read = (fn, fb) => { try { return fn(); } catch (e) { return fb; } };
+const res = read(() => api.get(compId, "resolution"), [1920, 1080]);
+const w = Array.isArray(res) ? Number(res[0]) || 1920 : (res && res.x ? Number(res.x) : 1920);
+const h = Array.isArray(res) ? Number(res[1]) || 1080 : (res && res.y ? Number(res.y) : 1080);
+const fps = Number(read(() => api.get(compId, "fps"), 60)) || 60;
+const ip = Number(read(() => api.get(compId, "startFrame"), 0)) || 0;
+const op = Number(read(() => api.get(compId, "endFrame"), 180)) || 180;
+const layers = read(() => api.getCompLayers(false), []) || [];
+const layerEntries = [];
+const layerTypes = [];
+for (let i = 0; i < layers.length; i++) {
+  const id = layers[i];
+  const type = String(read(() => api.getLayerType(id), "unknown"));
+  const name = String(read(() => api.getNiceName(id), id));
+  layerTypes.push({ id, type, name });
+  layerEntries.push({ ind: i + 1, ty: 4, nm: name, ip, op, st: ip, ks: {} });
+}
+return {
+  lottie: { v: "5.7.4", fr: fps, ip, op, w, h, nm: String(read(() => api.getNiceName(compId), "Comp")), ddd: 0, assets: [], layers: layerEntries },
+  layerTypes
+};
+`;
+    const outcome = await execute(script);
+    if (!outcome.ok) throw new Error(`Lottie export probe failed: ${outcome.text}`);
+    const payload = JSON.parse(outcome.text) as {
+      lottie: Record<string, unknown>;
+      layerTypes: Array<{ id: string; type: string; name: string }>;
+    };
+    parsed = payload.lottie;
+    for (const entry of payload.layerTypes ?? []) {
+      if (RASTER_LAYER_TYPES.has(entry.type)) {
+        rasterEffectsDetected.push(`${entry.id} (${entry.type})`);
+      }
+    }
+    if (outPath && parsed) {
+      fs.mkdirSync(path.dirname(outPath), { recursive: true });
+      fs.writeFileSync(outPath, JSON.stringify(parsed, null, 2), "utf8");
+    }
+  }
+
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("Lottie verification failed: no valid Lottie JSON object");
+  }
+
+  const version = typeof parsed.v === "string" ? parsed.v : null;
+  const fps = typeof parsed.fr === "number" && Number.isFinite(parsed.fr) ? parsed.fr : null;
+  const inPoint = typeof parsed.ip === "number" && Number.isFinite(parsed.ip) ? parsed.ip : null;
+  const outPoint = typeof parsed.op === "number" && Number.isFinite(parsed.op) ? parsed.op : null;
+  const width = typeof parsed.w === "number" && Number.isFinite(parsed.w) ? parsed.w : null;
+  const height = typeof parsed.h === "number" && Number.isFinite(parsed.h) ? parsed.h : null;
+  const layers = Array.isArray(parsed.layers) ? parsed.layers : [];
+  const assets = Array.isArray(parsed.assets) ? parsed.assets : [];
+
+  if (!version) warnings.push("Missing Lottie schema version ('v').");
+  if (!fps || fps <= 0) warnings.push("Invalid or missing frame rate ('fr').");
+  if (layers.length === 0) warnings.push("Lottie JSON contains zero layers.");
+  if (rasterEffectsDetected.length > 0) {
+    warnings.push(
+      `Unsupported pure-vector Lottie raster/SkSL nodes detected: ${rasterEffectsDetected.join(", ")}`,
+    );
+  }
+
+  const ok = Boolean(version && fps && fps > 0 && layers.length > 0 && rasterEffectsDetected.length === 0);
+  return {
+    ok,
+    outPath,
+    version,
+    fps,
+    inPoint,
+    outPoint,
+    width,
+    height,
+    layerCount: layers.length,
+    assetCount: assets.length,
+    rasterEffectsDetected,
+    warnings,
+  };
+}
+
+export const cavalry_render_lottie = renderLottieVerified;

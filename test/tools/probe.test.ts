@@ -7,7 +7,17 @@ import vm from "node:vm";
 import { buildMockApi, createMockApiState } from "../helpers/mock-cavalry-api.js";
 import type { MockApi } from "../helpers/mock-cavalry-api.js";
 import { wrapAtomicScript } from "../../src/runtime/atomic.js";
-import { PROBE_FUNCTIONS, buildProbeScript, normalizeProbe, runProbe } from "../../src/tools/probe.js";
+import {
+  PROBE_FUNCTIONS,
+  buildProbeScript,
+  normalizeProbe,
+  runProbe,
+  searchOfflineDocs,
+  lookupApiSignature,
+  resolveAttributePath,
+  getBoundingBoxHelper,
+  renderLottieVerified,
+} from "../../src/tools/probe.js";
 import type { ScriptOutcome } from "../../src/runtime/execute.js";
 import { removeTreeSync } from "../../src/shared/fs-safe.js";
 
@@ -153,4 +163,53 @@ test("probe: a read-only report target still returns the summary", async () => {
   );
   assert.ok(result.warnings.some(warning => /could not be written/.test(warning)));
   assert.ok(result.present.length > 0);
+});
+
+test("probe: offline docs KB search, API signature lookup, and deprecated attribute resolution", async () => {
+  const docs = searchOfflineDocs("materialColor");
+  assert.ok(docs.length >= 1, "expected offline docs to match materialColor");
+  assert.ok(docs.some(d => d.attributes.includes("material.materialColor")));
+
+  const sig = lookupApiSignature("magicEasing");
+  assert.ok(sig !== null);
+  assert.equal(sig?.name, "api.magicEasing");
+
+  const resolvedFill = resolveAttributePath("basicShape", "fill.color");
+  assert.equal(resolvedFill.canonical, "material.materialColor");
+  assert.equal(resolvedFill.deprecated, true);
+
+  const resolvedEllipse = resolveAttributePath("ellipse", "generator.dimensions");
+  assert.equal(resolvedEllipse.canonical, "generator.radius");
+  assert.equal(resolvedEllipse.deprecated, true);
+
+  const offlineReport = await runProbe({ query: "springModifier", offlineOnly: true });
+  assert.ok(Array.isArray(offlineReport.offlineDocs));
+  assert.ok((offlineReport.offlineDocs?.length ?? 0) >= 1);
+  assert.ok(Array.isArray(offlineReport.apiSignatures));
+});
+
+test("probe: getBoundingBoxHelper and renderLottieVerified", async () => {
+  const state = createMockApiState();
+  const api = buildMockApi(state);
+  const layer = api.create("basicShape", "Card");
+  api.set(layer, { position: [100, -50], "generator.dimensions": [300, 160] });
+
+  const bbox = await getBoundingBoxHelper(layer, true, { execute: sandboxExecutor(api) });
+  assert.equal(bbox.layerId, layer);
+  assert.equal(bbox.width, 300);
+  assert.equal(bbox.height, 160);
+  assert.equal(bbox.centre.x, 100);
+  assert.equal(bbox.centre.y, -50);
+
+  const lottiePath = path.join(workdir, "test_export.json");
+  const lottieRes = await renderLottieVerified({
+    outPath: lottiePath,
+    execute: sandboxExecutor(api),
+  });
+  assert.equal(lottieRes.ok, true);
+  assert.equal(lottieRes.version, "5.7.4");
+  assert.equal(lottieRes.fps, 60);
+  assert.equal(lottieRes.width, 1920);
+  assert.equal(lottieRes.height, 1080);
+  assert.ok(fs.existsSync(lottiePath));
 });

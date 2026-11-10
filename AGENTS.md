@@ -15,7 +15,18 @@
 - Render sequences with `cavalry_render_frames` (or `--render-frames`) in chunks, never a loop of single-frame calls. If a chunk times out, do not re-send it: the bridge is still running. Raise `perFrameMs`, lower `chunkFrames`, and rerun — the resume list comes from `render-progress.json`.
 - Run `cavalry_probe_api` (or `--probe`) before trusting an attribute path or API name. `api.getName` does not exist, `api.getNiceName` does; text attributes are `fontSize`/`letterSpacing`/`wordSpacing`/`font`, not `text.*`. Cache the report instead of re-guessing.
 - Keep `ENABLE_LEGACY_TOOLS` unset unless a client explicitly needs the original granular tools.
-- Use Cavalry API methods only. Never substitute After Effects APIs; `types/cavalry.d.ts` is the local contract.
+- Use Cavalry API methods only. Never substitute After Effects APIs; `types/cavalry.d.ts` and `types/cavalry-contexts.d.ts` (`@scenery/cavalry-types` 8 contexts) are the local contract.
+
+## Stage-by-Stage Skill Loading Protocol (`.qoder/skills/` & `.agents/skills/`)
+
+Always load the matching open-source motion-design skills by stage from `.qoder/skills/<skill>/SKILL.md` (mirrored byte-for-byte in `.agents/skills/<skill>/SKILL.md`):
+
+| Pipeline Stage | Required Skills to Load | Primary Responsibility & Output |
+| :--- | :--- | :--- |
+| **Stage 0 / 1: Brand & Ingest** | [`brand-intake`](.qoder/skills/brand-intake/SKILL.md), [`reanimate`](.qoder/skills/reanimate/SKILL.md) | Codify `brand.md` + `MOTION.md` tokens; capture live SaaS URLs (`capture.ts`, `gl.ts`) and fit `cubic-bezier` / harmonic `spring` curves (`easing.ts`). |
+| **Stage 2: Choreography & Mixing** | [`mix-and-match`](.qoder/skills/mix-and-match/SKILL.md), [`motion-design-skill`](.qoder/skills/motion-design-skill/SKILL.md), [`canonical-motion-moves`](.qoder/skills/canonical-motion-moves/SKILL.md), [`apple-launch-film`](.qoder/skills/apple-launch-film/SKILL.md), [`antigravity-design-expert`](.qoder/skills/antigravity-design-expert/SKILL.md), [`motion-design`](.qoder/skills/motion-design/SKILL.md) | Cross-pollinate 2–3 references with creative distance; route durations/easings through [`reference/timing-easing-tables.md`](.qoder/skills/motion-design-skill/reference/timing-easing-tables.md); stage isometric tilts (`rotateX(60deg) rotateZ(-45deg)`), multi-layered shadows, and `0.1s` domino staggers synced to `timeline.json`. |
+| **Stage 3 / 4: Procedural Compilation & Color** | [`color-motion`](.qoder/skills/color-motion/SKILL.md), [`kinetic-typography-skills`](.qoder/skills/kinetic-typography-skills/SKILL.md), [`data-animation-skills`](.qoder/skills/data-animation-skills/SKILL.md), [`motion-graphics`](.qoder/skills/motion-graphics/SKILL.md) | Compile procedural `_mg.*` / `_rb.*` rigs (`buildControllerNull`, `buildWeightedParentBlend`, `buildNinePointRoundedCard`, `buildAutoSizingPill`, `buildProximityFieldDuplicator`), `cat15` soft-cell/marker-sync presets, and `OKLCH` CSS gradients. |
+| **Stage 5 / 6: QA, Critique & Audio** | [`review-loop`](.qoder/skills/review-loop/SKILL.md), [`director-gate-check`](.qoder/skills/director-gate-check/SKILL.md), [`motion-design-critique`](.qoder/skills/motion-design-critique/SKILL.md), [`shot-composition`](.qoder/skills/shot-composition/SKILL.md), [`sound-design`](.qoder/skills/sound-design/SKILL.md) | Verify beat-indexed contact sheets against the 5 Studio Director Quality Gates (`>= 0.70s` readability holds, `5%`/`10%` safe zones, zero text collisions) and synthesize `-14 LUFS` WAV audio via `python -m sfx`. |
 
 <!-- PRESET_INDEX_START -->
 ## Compressed Preset Catalog (120 SaaS Presets)
@@ -146,5 +157,10 @@ cta_button_pulse | social_proof_cta | ctaText | A primary CTA fires looping outl
 final_cta_statement | social_proof_cta | lineOne,lineTwo,ctaText | A two-line hero statement lands with an underline
 trust_badges_row | social_proof_cta | heading | Four compliance badge cards pop in a row
 signup_conversion_flow | social_proof_cta | - | A four-stage funnel fills its visitor, signup, activation
+soft_cells_bento | procedural_saas | heading | Soft-body proximity bento grid with area-preserving squash-and-stretch and
+marker_sync_cascade | procedural_saas | headline | Beat-marker synchronized duplicator cascade and dynamics pulse for
+spring_text_reveal | procedural_saas | headline,subheadline | Sub-mesh staggered spring typography reveal with baseline clipping
+shape_morph_loop | procedural_saas | label | Procedural hero icon morph loop with radial burst
+csv_localiser_batch | procedural_saas | localeEn,localeDe,localeJa | CSV-driven localization and AB-testing rig with auto-sizing pills
 ```
 <!-- PRESET_INDEX_END -->

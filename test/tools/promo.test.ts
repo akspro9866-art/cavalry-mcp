@@ -198,3 +198,32 @@ test("promo: commands scale and pad mismatched comp resolutions", () => {
   assert.match(commands[0].args.join(" "), /pad=1080:1920/);
   assert.equal(concatPath, path.join(plan.workDir, "scenes.txt"));
 });
+
+test("promo: beatFrames synthesizes a -14 LUFS SFX track and muxes it automatically", async () => {
+  const mock = await startMockStallion({ native: true });
+  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "cav-promo-sfx-"));
+  const writes: string[] = [];
+  try {
+    const result = await runPromo(
+      {
+        scenes: [{ comp: "comp#1", start: 0, end: 2 }],
+        beatFrames: [0, 15, 30],
+        width: 32,
+        height: 32,
+      },
+      {
+        workDir,
+        execute: mockExecutor(mock, path.join(workDir, "state.json")),
+        runCommand: recordingRunner(writes),
+      },
+    );
+    assert.ok(result.sfxResult, "sfxResult metadata returned");
+    assert.equal(result.sfxResult?.targetLufs, -14);
+    assert.equal(result.sfxResult?.cueCount, 3);
+    assert.ok(fs.existsSync(result.sfxResult!.outWavPath));
+    assert.equal(result.commands.at(-1)?.label, "mux background audio");
+  } finally {
+    await mock.close();
+    removeTreeSync(workDir);
+  }
+});

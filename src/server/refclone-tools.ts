@@ -76,7 +76,7 @@ export interface PresetPackSignatures {
 
 /** Exact category IDs only. Empty means none; unknown IDs fail atomically. */
 export function getPresetSignatures(packNames: string[]): { packs: PresetPackSignatures[] } {
-  z.array(z.string()).max(14).parse(packNames);
+  z.array(z.string()).max(15).parse(packNames);
   const packs = [...new Set(packNames)].map(id => {
     const pack = PRESET_PACKS.find(candidate => candidate.id === id);
     if (!pack) throw new Error(`Unknown preset pack: ${id}`);
@@ -134,9 +134,9 @@ export function registerRefcloneTools(server: McpServer, dependencies: RefcloneT
   }, args => dispatch(async () => (await load()).inspectReference(args)));
 
   server.registerTool("refclone_get_preset_signatures", {
-    description: "Read signatures for up to 14 exact preset pack IDs. Empty requests return no packs. Never returns executable preset bodies.",
+    description: "Read signatures for up to 15 exact preset pack IDs. Empty requests return no packs. Never returns executable preset bodies.",
     inputSchema: z.strictObject({
-      packNames: z.array(z.string()).max(14).describe("Exact registry category IDs to return; empty means no signatures, not all packs."),
+      packNames: z.array(z.string()).max(15).describe("Exact registry category IDs to return; empty means no signatures, not all packs."),
     }),
   }, args => dispatch(async () => getPresetSignatures(args.packNames) as unknown as JsonValue));
 

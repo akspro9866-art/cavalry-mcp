@@ -966,6 +966,254 @@ const _rb = {
     this.alpha(on, 0);
     const knob = this.circle(name + " Knob", h / 2 - 5, { fill: "#F8FAFC", x: x - w / 2 + h / 2, y: y });
     return { track: track, on: on, knob: knob, w: w, h: h };
+  },
+
+  /**
+   * Controllerizer pattern (ivg-design/AE): gathers exposed child attributes onto a
+   * single master Control Null using api.addDynamic and api.connect.
+   */
+  buildControllerNull(name, bindings, o) {
+    o = o || {};
+    const ctrl = this.layer("null", name || "Master Controller", {
+      position: [o.x || 0, o.y || 0]
+    });
+    const list = Array.isArray(bindings) ? bindings : [];
+    const wired = [];
+    for (let i = 0; i < list.length; i++) {
+      const b = list[i] || {};
+      const attrName = String(b.name || ("ctrl_" + (i + 1)));
+      const attrType = String(b.type || "double");
+      let dynPath = "array." + attrName;
+      try {
+        if (typeof api.addDynamic === "function") {
+          const res = api.addDynamic(ctrl, attrType, attrName);
+          if (typeof res === "string" && res) dynPath = res;
+        }
+      } catch (e) {}
+      if (b.defaultValue != null) {
+        try { this.set(ctrl, this.one(dynPath, b.defaultValue)); } catch (e) {}
+      }
+      if (b.targetId && b.targetAttr) {
+        try { api.connect(ctrl, dynPath, b.targetId, b.targetAttr); } catch (e) {}
+        wired.push({ name: attrName, sourceAttr: dynPath, targetId: b.targetId, targetAttr: b.targetAttr });
+      }
+    }
+    return { controller: ctrl, bindings: wired };
+  },
+
+  /**
+   * Parent-o-bot pattern (ivg-design/AE): blends Position, Scale, Rotation and Opacity
+   * between two parent nulls via Cavalry valueBlend / transformConstraint nodes.
+   */
+  buildWeightedParentBlend(childId, parentAId, parentBId, weight, o) {
+    o = o || {};
+    const w = weight == null ? 0.5 : Math.max(0, Math.min(1, Number(weight)));
+    const blendNode = this.layer("valueBlend", o.name || "Parent Blend", {
+      weight: w * 100
+    });
+    const constraint = this.layer("transformConstraint", (o.name || "Parent Blend") + " Constraint", {
+      weight: w * 100
+    });
+    try {
+      api.connect(parentAId, "position", blendNode, "a");
+      api.connect(parentBId, "position", blendNode, "b");
+      api.connect(blendNode, "id", childId, "position");
+      api.connect(constraint, "id", childId, "transform");
+    } catch (e) {}
+    if (o.startFrame != null && o.endFrame != null) {
+      const fromW = o.fromWeight == null ? 0 : Number(o.fromWeight) * 100;
+      const toW = o.toWeight == null ? 100 : Number(o.toWeight) * 100;
+      this.kf(blendNode, "weight", [[o.startFrame, fromW], [o.endFrame, toW]], this.ease(o.easing));
+    }
+    return { child: childId, parentA: parentAId, parentB: parentBId, blendNode: blendNode, constraint: constraint, weight: w };
+  },
+
+  /**
+   * Rectangulator pattern (ivg-design/AE): parametric SaaS UI card with independent
+   * per-corner radii and a 9-point anchor grid via align Deformers.
+   */
+  buildNinePointRoundedCard(name, w, h, o) {
+    o = o || {};
+    const anchorMap = {
+      topLeft: [-1, -1],
+      topCenter: [0, -1],
+      topRight: [1, -1],
+      middleLeft: [-1, 0],
+      center: [0, 0],
+      middleRight: [1, 0],
+      bottomLeft: [-1, 1],
+      bottomCenter: [0, 1],
+      bottomRight: [1, 1]
+    };
+    const anchorKey = o.anchor && anchorMap[o.anchor] ? o.anchor : "center";
+    const pair = anchorMap[anchorKey];
+    const radii = Array.isArray(o.cornerRadii) && o.cornerRadii.length >= 4
+      ? o.cornerRadii.map((n) => Number(n) || 0)
+      : [
+          Number(o.tl != null ? o.tl : (o.radius != null ? o.radius : 18)),
+          Number(o.tr != null ? o.tr : (o.radius != null ? o.radius : 18)),
+          Number(o.br != null ? o.br : (o.radius != null ? o.radius : 18)),
+          Number(o.bl != null ? o.bl : (o.radius != null ? o.radius : 18))
+        ];
+    const avgRadius = (radii[0] + radii[1] + radii[2] + radii[3]) / 4;
+    const card = this.rect(name || "Rounded Card", w || 360, h || 220, {
+      fill: o.fill || "#111827",
+      radius: avgRadius,
+      x: o.x || 0,
+      y: o.y || 0,
+      stroke: o.stroke !== false,
+      strokeColor: o.strokeColor || "#27303F",
+      strokeWidth: o.strokeWidth || 1.5
+    });
+    try {
+      api.set(card, {
+        "generator.tlRadius": radii[0],
+        "generator.trRadius": radii[1],
+        "generator.brRadius": radii[2],
+        "generator.blRadius": radii[3]
+      });
+    } catch (e) {}
+    const alignId = this.anchor(card, pair[0], pair[1]);
+    return { card: card, align: alignId, anchor: anchorKey, cornerRadii: radii, width: w || 360, height: h || 220 };
+  },
+
+  /**
+   * SubtitleForge / Localiser pattern (ivg-design/AE + Canvalry): wires a textShape
+   * bounding box dynamically to a basicShape pill background with live padding,
+   * border strokeMaterial, and diffused dropShadowFilter / glowFilter.
+   */
+  buildAutoSizingPill(name, textStr, o) {
+    o = o || {};
+    const x = o.x || 0, y = o.y || 0;
+    const fs = o.fontSize || 20;
+    const padX = o.padX == null ? 24 : Number(o.padX);
+    const padY = o.padY == null ? 14 : Number(o.padY);
+    const label = this.text(String(textStr == null ? "Pill" : textStr), fs, {
+      color: o.textColor || "#F8FAFC",
+      x: x,
+      y: y,
+      name: (name || "Auto Pill") + " Text"
+    });
+    let bb = null;
+    try { bb = api.getBoundingBox(label, false); } catch (e) { bb = null; }
+    const textW = bb && bb.width ? Number(bb.width) : Math.max(48, String(textStr || "Pill").length * fs * 0.58);
+    const textH = bb && bb.height ? Number(bb.height) : Math.round(fs * 1.25);
+    const pillW = Math.round(textW + padX * 2);
+    const pillH = Math.round(textH + padY * 2);
+    const bg = this.rect((name || "Auto Pill") + " BG", pillW, pillH, {
+      fill: o.fill || "#0F172A",
+      radius: o.radius == null ? pillH / 2 : o.radius,
+      x: x,
+      y: y,
+      stroke: o.stroke !== false,
+      strokeColor: o.strokeColor || "#10B981",
+      strokeWidth: o.strokeWidth || 1.5
+    });
+    let shadow = null;
+    if (o.shadow !== false) {
+      shadow = this.layer("dropShadowFilter", (name || "Auto Pill") + " Shadow", {
+        shadowRadius: o.shadowRadius == null ? 18 : o.shadowRadius,
+        shadowOffsetY: o.shadowOffsetY == null ? -8 : o.shadowOffsetY,
+        shadowOpacity: o.shadowOpacity == null ? 35 : o.shadowOpacity
+      });
+      try { api.connect(shadow, "id", bg, "filters"); } catch (e) {}
+    }
+    if (o.glow) {
+      this.glow(bg, o.glowColor || o.strokeColor || "#10B981", o.glow, o.glowIntensity == null ? 1.2 : o.glowIntensity);
+    }
+    return { bg: bg, text: label, shadow: shadow, width: pillW, height: pillH, padX: padX, padY: padY };
+  },
+
+  /**
+   * Blender Geometry Nodes Proximity + Field Falloff pattern (LobzyJay/blender-motion):
+   * combines Cavalry Duplicator + Falloff + Sub-Mesh + Noise Deformer so an effector
+   * layer modulates clone scale and displacement by spatial proximity.
+   */
+  buildProximityFieldDuplicator(name, sourceId, effectorId, o) {
+    o = o || {};
+    const base = sourceId || this.circle((name || "Field") + " Dot", o.dotRadius || 10, { fill: o.fill || "#10B981" });
+    const eff = effectorId || this.layer("null", (name || "Field") + " Effector", { position: [o.effectorX || 0, o.effectorY || 0] });
+    const dupId = this.dup(base, {
+      name: (name || "Field") + " Duplicator",
+      distribution: o.distribution || "grid",
+      count: o.count || [6, 4],
+      size: o.size || [960, 540]
+    });
+    const falloffId = this.layer("falloff", (name || "Field") + " Falloff", {
+      size: o.falloffSize || [360, 360],
+      strength: o.strength == null ? 100 : o.strength,
+      shapeType: 0
+    });
+    const subMeshId = this.layer("subMesh", (name || "Field") + " SubMesh", {
+      levelMode: 0,
+      scale: [o.peakScale || 1.45, o.peakScale || 1.45]
+    });
+    const noiseId = this.layer("noise", (name || "Field") + " Noise", {
+      strength: o.noiseStrength == null ? 14 : o.noiseStrength,
+      "generator.frequency": o.frequency == null ? 0.4 : o.frequency,
+      "generator.seed": o.seed == null ? 11 : o.seed
+    });
+    try {
+      api.parent(falloffId, eff);
+      api.connect(falloffId, "id", subMeshId, "falloffs");
+      api.connect(falloffId, "id", noiseId, "falloffs");
+      api.connect(subMeshId, "id", dupId, "deformers");
+      api.connect(noiseId, "id", dupId, "deformers");
+    } catch (e) {}
+    return { duplicator: dupId, source: base, effector: eff, falloff: falloffId, subMesh: subMeshId, noise: noiseId };
   }
 };
 `;
+
+export interface ControllerBindingSpec {
+  name: string;
+  type?: "double" | "int" | "bool" | "color" | "string";
+  defaultValue?: unknown;
+  targetId?: string;
+  targetAttr?: string;
+}
+
+export function buildControllerNull(
+  name: string,
+  bindings: ControllerBindingSpec[] = [],
+  opts: Record<string, unknown> = {},
+): string {
+  return `_rb.buildControllerNull(${JSON.stringify(name)}, ${JSON.stringify(bindings)}, ${JSON.stringify(opts)})`;
+}
+
+export function buildWeightedParentBlend(
+  childId: string,
+  parentAId: string,
+  parentBId: string,
+  weight = 0.5,
+  opts: Record<string, unknown> = {},
+): string {
+  return `_rb.buildWeightedParentBlend(${JSON.stringify(childId)}, ${JSON.stringify(parentAId)}, ${JSON.stringify(parentBId)}, ${Number(weight)}, ${JSON.stringify(opts)})`;
+}
+
+export function buildNinePointRoundedCard(
+  name: string,
+  w = 360,
+  h = 220,
+  opts: Record<string, unknown> = {},
+): string {
+  return `_rb.buildNinePointRoundedCard(${JSON.stringify(name)}, ${Number(w)}, ${Number(h)}, ${JSON.stringify(opts)})`;
+}
+
+export function buildAutoSizingPill(
+  name: string,
+  textStr: string,
+  opts: Record<string, unknown> = {},
+): string {
+  return `_rb.buildAutoSizingPill(${JSON.stringify(name)}, ${JSON.stringify(textStr)}, ${JSON.stringify(opts)})`;
+}
+
+export function buildProximityFieldDuplicator(
+  name: string,
+  sourceId: string | null = null,
+  effectorId: string | null = null,
+  opts: Record<string, unknown> = {},
+): string {
+  return `_rb.buildProximityFieldDuplicator(${JSON.stringify(name)}, ${JSON.stringify(sourceId)}, ${JSON.stringify(effectorId)}, ${JSON.stringify(opts)})`;
+}
+

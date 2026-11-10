@@ -212,6 +212,8 @@ Example: [{"op":"create","layerType":"basicShape","name":"BG","as":"bg"},{"op":"
       includeLayerTypes: z.boolean().optional().describe("Include api.getAllLayerTypes() in the report (default true)."),
       inlineSurface: z.boolean().optional().describe("Return the full function-name list instead of only the file path."),
       writeFile: z.string().optional().describe("Report path (default ~/.cavalry-mcp/cavalry-api-capabilities.json)."),
+      query: z.string().optional().describe("Optional offline documentation and API signature search query (e.g. duplicator, materialColor)."),
+      offlineOnly: z.boolean().optional().describe("When true with query, search the offline Cavalry 2.8 knowledge base without calling the bridge."),
     },
     async args => {
       try {
@@ -222,6 +224,8 @@ Example: [{"op":"create","layerType":"basicShape","name":"BG","as":"bg"},{"op":"
           includeLayerTypes: args.includeLayerTypes,
           inlineSurface: args.inlineSurface,
           writeFile: args.writeFile,
+          query: args.query,
+          offlineOnly: args.offlineOnly,
         });
         return jsonResult(result);
       } catch (err) {

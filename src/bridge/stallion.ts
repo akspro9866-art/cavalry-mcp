@@ -12,12 +12,242 @@ import {
   type ExecutionState,
 } from "../shared/state.js";
 
+export const EXPRESSION_PAYLOAD_TYPES = [
+  "javaScriptShape",
+  "javaScriptUtility",
+  "javaScriptModifier",
+  "javaScriptDeformer",
+  "javaScriptEmitter",
+  "skslShader",
+  "skslFilter",
+  "preRenderExpression",
+  "postRenderExpression",
+] as const;
+
+export type ExpressionPayloadType = (typeof EXPRESSION_PAYLOAD_TYPES)[number];
+
+export const CAVALRY_EXECUTION_CONTEXTS = [
+  "script",
+  "plugin",
+  "render",
+  "shape",
+  "utility",
+  "deformer",
+  "emitter",
+  "modifier",
+] as const;
+
+export type CavalryExecutionContext = (typeof CAVALRY_EXECUTION_CONTEXTS)[number];
+
+export const CONTEXT_GLOBALS_BY_CONTEXT: Record<CavalryExecutionContext, readonly string[]> = {
+  script: ["console", "api", "cavalry", "ui"],
+  plugin: ["console", "api", "ctx", "cavalry", "ui", "plugin", "install"],
+  render: ["console", "api", "render"],
+  shape: ["console", "ctx", "cavalry"],
+  utility: ["console", "ctx", "cavalry"],
+  deformer: ["console", "ctx", "cavalry", "def"],
+  emitter: ["console", "ctx", "cavalry"],
+  modifier: ["console", "ctx", "cavalry"],
+};
+
+export interface ConsoleDiagnosticEntry {
+  level: string;
+  text: string;
+}
+
+export interface ContextValidationResult {
+  valid: boolean;
+  context: CavalryExecutionContext;
+  allowedGlobals: string[];
+  forbiddenUsages: string[];
+  diagnostics: ConsoleDiagnosticEntry[];
+}
+
+export interface SkslValidationResult {
+  valid: boolean;
+  uniforms: Array<{ type: string; name: string }>;
+  errors: string[];
+  warnings: string[];
+  diagnostics: ConsoleDiagnosticEntry[];
+}
+
+export interface ExpressionReceipt {
+  sceneStateHash?: string | null;
+  consoleDiagnostics: ConsoleDiagnosticEntry[];
+  jsLogDiagnostics: ConsoleDiagnosticEntry[];
+  beatBBoxes?: Record<string, unknown>;
+  payloadType: ExpressionPayloadType | string;
+  context: CavalryExecutionContext;
+  applied: string[];
+  skipped: string[];
+  valid: boolean;
+  uniforms?: Array<{ type: string; name: string }>;
+}
+
+export interface ExpressionExecutionResult {
+  ok: boolean;
+  seq: string;
+  raw: string;
+  applied: string[];
+  skipped: string[];
+  receipt: ExpressionReceipt;
+  error?: string;
+}
+
+export function isExpressionPayloadType(type: unknown): type is ExpressionPayloadType {
+  return typeof type === "string" && (EXPRESSION_PAYLOAD_TYPES as readonly string[]).includes(type);
+}
+
+export function payloadTypeToExecutionContext(type: string): CavalryExecutionContext {
+  switch (type) {
+    case "javaScriptShape":
+      return "shape";
+    case "javaScriptUtility":
+      return "utility";
+    case "javaScriptModifier":
+      return "modifier";
+    case "javaScriptDeformer":
+      return "deformer";
+    case "javaScriptEmitter":
+      return "emitter";
+    case "preRenderExpression":
+    case "postRenderExpression":
+    case "renderSetupExpression":
+    case "render":
+      return "render";
+    case "plugin":
+      return "plugin";
+    case "shape":
+    case "utility":
+    case "deformer":
+    case "emitter":
+    case "modifier":
+      return type;
+    default:
+      return "script";
+  }
+}
+
+export function validateCavalryContextUsage(code: string, contextOrPayloadType: string): ContextValidationResult {
+  const context = payloadTypeToExecutionContext(contextOrPayloadType);
+  const allowed = new Set(CONTEXT_GLOBALS_BY_CONTEXT[context]);
+  const allNamespaces = ["api", "cavalry", "ctx", "def", "ui", "plugin", "install", "render"];
+  const stripped = String(code ?? "")
+    .replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, " ")
+    .replace(/(["'`])(?:\\.|(?!\1)[^\\])*\1/g, '""');
+  const forbiddenUsages: string[] = [];
+  const diagnostics: ConsoleDiagnosticEntry[] = [];
+  for (const ns of allNamespaces) {
+    if (allowed.has(ns)) continue;
+    const pattern = new RegExp(`\\b${ns}\\s*\\.\\s*([A-Za-z_]\\w*)`, "g");
+    for (const match of stripped.matchAll(pattern)) {
+      const usage = `${ns}.${match[1]}`;
+      if (!forbiddenUsages.includes(usage)) {
+        forbiddenUsages.push(usage);
+        diagnostics.push({
+          level: "error",
+          text: `Context '${context}' (${contextOrPayloadType}) does not expose '${ns}' (found '${usage}'). Allowed globals: ${[...allowed].join(", ")}`,
+        });
+      }
+    }
+  }
+  return {
+    valid: forbiddenUsages.length === 0,
+    context,
+    allowedGlobals: [...allowed],
+    forbiddenUsages,
+    diagnostics,
+  };
+}
+
+export function validateSkslSource(code: string): SkslValidationResult {
+  const src = String(code ?? "").trim();
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const uniforms: Array<{ type: string; name: string }> = [];
+
+  if (!src) {
+    errors.push("SkSL source is empty");
+  } else {
+    let depth = 0;
+    for (const ch of src) {
+      if (ch === "{") depth += 1;
+      else if (ch === "}") depth -= 1;
+      if (depth < 0) break;
+    }
+    if (depth !== 0) {
+      errors.push("SkSL syntax error: unbalanced braces `{}`");
+    }
+    if (!/\b(?:half4|vec4|float4)\s+main\s*\(/.test(src)) {
+      errors.push("SkSL shader must define a `half4 main(float2 fragCoord)` or `vec4 main(vec2 coord)` entry point");
+    }
+    if (/\bgl_FragColor\b/.test(src)) {
+      warnings.push("SkSL uses return value from `main(float2 fragCoord)` instead of legacy GLSL `gl_FragColor`");
+    }
+    for (const match of src.matchAll(/\buniform\s+(float|int|bool|half\d*|vec\d+|float\d+|mat\d+|shader)\s+([A-Za-z_]\w*)\s*;/g)) {
+      uniforms.push({ type: match[1], name: match[2] });
+    }
+  }
+
+  const diagnostics: ConsoleDiagnosticEntry[] = [
+    ...errors.map((e) => ({ level: "error", text: e })),
+    ...warnings.map((w) => ({ level: "warn", text: w })),
+  ];
+  return {
+    valid: errors.length === 0,
+    uniforms,
+    errors,
+    warnings,
+    diagnostics,
+  };
+}
+
+export function captureJsLogDiagnostics(logPathOrText?: string | null): ConsoleDiagnosticEntry[] {
+  if (!logPathOrText) return [];
+  let raw = String(logPathOrText);
+  if (!raw.includes("\n") && (raw.endsWith(".txt") || raw.endsWith(".log") || raw.includes("/") || raw.includes("\\"))) {
+    try {
+      if (fs.existsSync(raw)) {
+        raw = fs.readFileSync(raw, "utf8");
+      } else {
+        return [];
+      }
+    } catch {
+      return [];
+    }
+  }
+  const entries: ConsoleDiagnosticEntry[] = [];
+  for (const rawLine of raw.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const bracketMatch = /^\[(ERROR|WARN|WARNING|INFO|LOG)\]\s*(.*)$/i.exec(line);
+    if (bracketMatch) {
+      const tag = bracketMatch[1].toLowerCase();
+      const level = tag === "warning" ? "warn" : tag;
+      entries.push({ level, text: bracketMatch[2].slice(0, 240) });
+      continue;
+    }
+    if (/\b(ReferenceError|TypeError|SyntaxError|Error|error)\b/.test(line)) {
+      entries.push({ level: "error", text: line.slice(0, 240) });
+    } else if (/\b(warn|warning|Skipped layer|unknown attribute)\b/i.test(line)) {
+      entries.push({ level: "warn", text: line.slice(0, 240) });
+    } else {
+      entries.push({ level: "info", text: line.slice(0, 240) });
+    }
+  }
+  return entries.slice(-64);
+}
+
 export interface StallionPayload {
-  type: "script" | "javaScriptShape" | "skslShader" | "renderSetupExpression";
+  type: "script" | ExpressionPayloadType | "renderSetupExpression";
   code: string;
   path?: string;
   seq?: string;
   statePath?: string;
+  targetId?: string;
+  layerId?: string;
+  attachTo?: string;
+  beatFrames?: number[];
 }
 
 export interface StallionConfig {
@@ -713,4 +943,140 @@ export function resolveRenderFrameFastPixels(envelope: RenderFrameFastResponse, 
     envelope.inlineNote = `disk readback failed for ${outPath}: ${error instanceof Error ? error.message : String(error)}`;
   }
   return envelope;
+}
+
+/**
+ * Execute one of the 9 expression/shader payload types (`javaScriptShape`,
+ * `javaScriptUtility`, `javaScriptModifier`, `javaScriptDeformer`,
+ * `javaScriptEmitter`, `skslShader`, `skslFilter`, `preRenderExpression`,
+ * `postRenderExpression`) with deterministic `seq`-matched execution receipts
+ * and `js_log.txt` console warning/error capture.
+ */
+export async function executeExpressionPayload(
+  type: ExpressionPayloadType | "renderSetupExpression",
+  code: string,
+  config: StallionConfig = CONFIG,
+  opts?: {
+    seq?: string;
+    targetId?: string;
+    layerId?: string;
+    attachTo?: string;
+    beatFrames?: number[];
+    jsLogPath?: string;
+    timeoutMs?: number;
+    httpTimeoutMs?: number;
+  },
+): Promise<ExpressionExecutionResult> {
+  const seq = opts?.seq ?? randomUUID();
+  const payload: Record<string, unknown> = { type, code, seq };
+  if (opts?.targetId) payload.targetId = opts.targetId;
+  if (opts?.layerId) payload.layerId = opts.layerId;
+  if (opts?.attachTo) payload.attachTo = opts.attachTo;
+  if (opts?.beatFrames) payload.beatFrames = opts.beatFrames;
+
+  const isSksl = type.startsWith("sksl");
+  const skslCheck = isSksl ? validateSkslSource(code) : null;
+  const ctxCheck = !isSksl ? validateCavalryContextUsage(code, type) : null;
+  const context = payloadTypeToExecutionContext(type);
+
+  const raw = await enqueue(async () => {
+    await postRaw(payload, config, opts?.httpTimeoutMs);
+    return waitForNative(config, seq, opts?.timeoutMs ?? config.resultTimeoutMs);
+  });
+
+  const jsLogDiagnostics = captureJsLogDiagnostics(opts?.jsLogPath);
+  const localDiags = isSksl ? (skslCheck?.diagnostics ?? []) : (ctxCheck?.diagnostics ?? []);
+  const localValid = isSksl ? (skslCheck?.valid ?? true) : (ctxCheck?.valid ?? true);
+
+  if (!raw) {
+    return {
+      ok: false,
+      seq,
+      raw: "",
+      applied: [],
+      skipped: [],
+      error: `Timed out waiting for expression receipt (${type}, seq=${seq})`,
+      receipt: {
+        sceneStateHash: null,
+        consoleDiagnostics: localDiags,
+        jsLogDiagnostics,
+        beatBBoxes: {},
+        payloadType: type,
+        context,
+        applied: [],
+        skipped: [],
+        valid: false,
+        ...(skslCheck ? { uniforms: skslCheck.uniforms } : {}),
+      },
+    };
+  }
+
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return {
+      ok: false,
+      seq,
+      raw,
+      applied: [],
+      skipped: [],
+      error: `Unparsable expression result: ${raw.slice(0, 300)}`,
+      receipt: {
+        sceneStateHash: null,
+        consoleDiagnostics: localDiags,
+        jsLogDiagnostics,
+        beatBBoxes: {},
+        payloadType: type,
+        context,
+        applied: [],
+        skipped: [],
+        valid: false,
+      },
+    };
+  }
+
+  const applied = Array.isArray(parsed.applied) ? parsed.applied.map(String) : [];
+  const skipped = Array.isArray(parsed.skipped) ? parsed.skipped.map(String) : [];
+  const remoteReceipt = (parsed.receipt && typeof parsed.receipt === "object" ? parsed.receipt : {}) as Record<string, unknown>;
+  const remoteDiags = Array.isArray(remoteReceipt.consoleDiagnostics)
+    ? (remoteReceipt.consoleDiagnostics as ConsoleDiagnosticEntry[])
+    : [];
+  const remoteJsLog = Array.isArray(remoteReceipt.jsLogDiagnostics)
+    ? (remoteReceipt.jsLogDiagnostics as ConsoleDiagnosticEntry[])
+    : [];
+
+  const mergedConsole = [...remoteDiags];
+  for (const d of localDiags) {
+    if (!mergedConsole.some((r) => r.text === d.text)) mergedConsole.push(d);
+  }
+  const mergedJsLog = [...remoteJsLog];
+  for (const d of jsLogDiagnostics) {
+    if (!mergedJsLog.some((r) => r.text === d.text)) mergedJsLog.push(d);
+  }
+
+  const receipt: ExpressionReceipt = {
+    sceneStateHash: typeof remoteReceipt.sceneStateHash === "string" ? remoteReceipt.sceneStateHash : null,
+    consoleDiagnostics: mergedConsole,
+    jsLogDiagnostics: mergedJsLog,
+    beatBBoxes: (remoteReceipt.beatBBoxes && typeof remoteReceipt.beatBBoxes === "object"
+      ? (remoteReceipt.beatBBoxes as Record<string, unknown>)
+      : {}),
+    payloadType: type,
+    context,
+    applied,
+    skipped,
+    valid: (remoteReceipt.valid !== false) && localValid,
+    ...(skslCheck ? { uniforms: skslCheck.uniforms } : {}),
+  };
+
+  return {
+    ok: parsed.ok === true,
+    seq,
+    raw,
+    applied,
+    skipped,
+    receipt,
+    ...(typeof parsed.error === "string" ? { error: parsed.error } : {}),
+  };
 }

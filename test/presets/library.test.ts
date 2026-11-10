@@ -14,7 +14,7 @@ import {
 } from "../../src/presets/cavalry_snippets.js";
 import { RB_HELPERS_SOURCE } from "../../src/presets/rig_builders.js";
 
-const CATEGORY_TOTAL = 15;
+const CATEGORY_TOTAL = 16;
 
 /** Mock Cavalry bridge: records calls, returns stable ids, never touches a real app. */
 function makeApi() {
@@ -82,14 +82,14 @@ function typedOverrides(def: (typeof PRESET_DEFS)[number]): Record<string, unkno
   return out;
 }
 
-test("registry: 120 unique presets across 14 static categories (+1 runtime)", () => {
-  assert.equal(PRESET_DEFS.length, 120);
-  assert.equal(PRESET_NAMES.length, 120);
+test("registry: 125 unique presets across 15 static categories (+1 runtime)", () => {
+  assert.equal(PRESET_DEFS.length, 125);
+  assert.equal(PRESET_NAMES.length, 125);
   assert.equal(PRESET_CATEGORIES.length, CATEGORY_TOTAL);
-  assert.equal(PRESET_CATEGORIES.filter(cat => cat.presets !== "dynamic").length, 14);
+  assert.equal(PRESET_CATEGORIES.filter(cat => cat.presets !== "dynamic").length, 15);
   assert.equal(PRESET_CATEGORIES.filter(cat => cat.presets === "dynamic").map(cat => cat.id).join(","), "cloned_styles");
   const ids = PRESET_DEFS.map((def) => def.id);
-  assert.equal(new Set(ids).size, 120);
+  assert.equal(new Set(ids).size, 125);
   assert.deepEqual([...PRESET_NAMES], ids);
   for (const def of PRESET_DEFS) {
     assert.ok(PRESET_CATEGORIES.some((cat) => cat.id === def.category), `${def.id} has an unknown category`);
@@ -98,7 +98,7 @@ test("registry: 120 unique presets across 14 static categories (+1 runtime)", ()
   }
 });
 
-test("registry: category distribution is 5 x 4 + 10 x 10", () => {
+test("registry: category distribution is 5 x 5 + 10 x 10", () => {
   const counts = new Map<string, number>();
   for (const def of PRESET_DEFS) counts.set(def.category, (counts.get(def.category) ?? 0) + 1);
   for (const cat of PRESET_CATEGORIES) {
@@ -112,10 +112,11 @@ test("registry: category distribution is 5 x 4 + 10 x 10", () => {
 });
 
 test("listPresets: filters by id, category id, category index and label", () => {
-  assert.equal(listPresets().length, 120);
+  assert.equal(listPresets().length, 125);
   assert.equal(listPresets("fintech_billing").length, 10);
   assert.equal(listPresets("9").length, 10);
   assert.equal(listPresets("social_proof_cta").length, 10);
+  assert.equal(listPresets("procedural_saas").length, 5);
   assert.equal(listPresets("trust_badges_row").length, 1);
   assert.equal(listPresets("no-such-category").length, 0);
 });

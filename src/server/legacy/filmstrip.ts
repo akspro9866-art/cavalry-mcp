@@ -80,3 +80,166 @@ export function sampleFrames(inFrame: number, outFrame: number, count: number): 
   }
   return out;
 }
+
+export interface FilmstripBoundingBox {
+  layerId: string;
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  role?: "text" | "card" | "hero" | "background" | "ui";
+  inFrame?: number;
+  outFrame?: number;
+}
+
+export interface FilmstripReviewOptions {
+  compWidth?: number;
+  compHeight?: number;
+  fps?: number;
+  safeMarginPx?: number;
+  minReadabilityHoldSec?: number;
+  frames?: RasterFrame[];
+}
+
+export interface FilmstripReviewIssue {
+  type: "collision" | "clipping" | "safe_margin" | "readability_hold" | "blank_frame";
+  severity: "warning" | "error";
+  layerIds: string[];
+  message: string;
+}
+
+export interface FilmstripReviewResult {
+  passed: boolean;
+  score: number;
+  issues: FilmstripReviewIssue[];
+  checkedBoxes: number;
+  checkedFrames: number;
+}
+
+/**
+ * Automated visual review loop (remotion-dev/skills / wshobson/agents pattern):
+ * Evaluates layer bounding boxes and optional raster contact-sheet frames for:
+ *  - Out-of-frame clipping
+ *  - Safe-margin violations
+ *  - Unintended text-on-text / sibling bounding-box collisions
+ *  - Readability hold duration (>= 0.70s for text elements)
+ *  - Blank raster frames
+ */
+export function evaluateFilmstripReviewLoop(
+  boxes: FilmstripBoundingBox[],
+  opts: FilmstripReviewOptions = {},
+): FilmstripReviewResult {
+  const compW = opts.compWidth ?? 1920;
+  const compH = opts.compHeight ?? 1080;
+  const fps = Math.max(1, opts.fps ?? 60);
+  const margin = opts.safeMarginPx ?? 60;
+  const minHoldSec = opts.minReadabilityHoldSec ?? 0.70;
+  const issues: FilmstripReviewIssue[] = [];
+
+  for (const box of boxes) {
+    if (box.role === "background") continue;
+    const minX = Math.min(box.left, box.right);
+    const maxX = Math.max(box.left, box.right);
+    const minY = Math.min(box.top, box.bottom);
+    const maxY = Math.max(box.top, box.bottom);
+
+    if (minX < 0 || minY < 0 || maxX > compW || maxY > compH) {
+      issues.push({
+        type: "clipping",
+        severity: "error",
+        layerIds: [box.layerId],
+        message: `Layer '${box.layerId}' clips outside composition bounds (${compW}x${compH}).`,
+      });
+    } else if (
+      box.role === "text" &&
+      (minX < margin || minY < margin || maxX > compW - margin || maxY > compH - margin)
+    ) {
+      issues.push({
+        type: "safe_margin",
+        severity: "warning",
+        layerIds: [box.layerId],
+        message: `Text layer '${box.layerId}' violates ${margin}px safe title margin.`,
+      });
+    }
+
+    if (box.role === "text" && typeof box.inFrame === "number" && typeof box.outFrame === "number") {
+      const holdSec = Math.max(0, box.outFrame - box.inFrame) / fps;
+      if (holdSec < minHoldSec) {
+        issues.push({
+          type: "readability_hold",
+          severity: "warning",
+          layerIds: [box.layerId],
+          message: `Text layer '${box.layerId}' hold (${holdSec.toFixed(2)}s) is below ${minHoldSec.toFixed(2)}s readability threshold.`,
+        });
+      }
+    }
+  }
+
+  // Check text-on-text collisions for temporally overlapping layers
+  const textBoxes = boxes.filter((b) => (b.role ?? "text") === "text");
+  for (let i = 0; i < textBoxes.length; i++) {
+    for (let j = i + 1; j < textBoxes.length; j++) {
+      const a = textBoxes[i];
+      const b = textBoxes[j];
+      const timeOverlap =
+        a.inFrame === undefined ||
+        a.outFrame === undefined ||
+        b.inFrame === undefined ||
+        b.outFrame === undefined ||
+        (a.inFrame < b.outFrame && b.inFrame < a.outFrame);
+      if (!timeOverlap) continue;
+
+      const aMinX = Math.min(a.left, a.right);
+      const aMaxX = Math.max(a.left, a.right);
+      const aMinY = Math.min(a.top, a.bottom);
+      const aMaxY = Math.max(a.top, a.bottom);
+
+      const bMinX = Math.min(b.left, b.right);
+      const bMaxX = Math.max(b.left, b.right);
+      const bMinY = Math.min(b.top, b.bottom);
+      const bMaxY = Math.max(b.top, b.bottom);
+
+      const overlapX = Math.max(0, Math.min(aMaxX, bMaxX) - Math.max(aMinX, bMinX));
+      const overlapY = Math.max(0, Math.min(aMaxY, bMaxY) - Math.max(aMinY, bMinY));
+      if (overlapX > 2 && overlapY > 2) {
+        issues.push({
+          type: "collision",
+          severity: "error",
+          layerIds: [a.layerId, b.layerId],
+          message: `Text bounding-box collision between '${a.layerId}' and '${b.layerId}' (${Math.round(overlapX)}x${Math.round(overlapY)}px overlap).`,
+        });
+      }
+    }
+  }
+
+  const frames = opts.frames ?? [];
+  frames.forEach((f, idx) => {
+    let nonZero = 0;
+    for (let i = 0; i < f.data.length; i += 4) {
+      if (f.data[i] > 25 || f.data[i + 1] > 25 || f.data[i + 2] > 25) {
+        nonZero++;
+        break;
+      }
+    }
+    if (nonZero === 0) {
+      issues.push({
+        type: "blank_frame",
+        severity: "warning",
+        layerIds: [],
+        message: `Filmstrip frame #${idx} appears completely blank or near-black.`,
+      });
+    }
+  });
+
+  const errorCount = issues.filter((i) => i.severity === "error").length;
+  const warningCount = issues.filter((i) => i.severity === "warning").length;
+  const score = Math.max(0, 100 - errorCount * 25 - warningCount * 10);
+
+  return {
+    passed: errorCount === 0,
+    score,
+    issues,
+    checkedBoxes: boxes.length,
+    checkedFrames: frames.length,
+  };
+}

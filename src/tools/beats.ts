@@ -317,3 +317,379 @@ export function formatBeatSummary(analysis: BeatAnalysis): string {
   const duration = analysis.durationSeconds == null ? "?" : `${analysis.durationSeconds.toFixed(2)}s`;
   return `${analysis.count} beats | ${bpm} BPM | ${analysis.fps}fps | ${duration} | ${analysis.source}`;
 }
+
+export type SfxKind = "whoosh" | "pop" | "click" | "riser" | "subDrop" | "chime";
+
+export interface SfxCueSpec {
+  frame: number;
+  timeSeconds?: number;
+  kind?: SfxKind;
+  gainDb?: number;
+  durationMs?: number;
+  pitchHz?: number;
+  label?: string;
+}
+
+export interface TimelineJsonContract {
+  schema: "claude-motion/timeline@1";
+  fps: number;
+  bpm: number | null;
+  durationSeconds: number;
+  targetLufs: number;
+  truePeakCeilingDb: number;
+  sampleRate: number;
+  beats: Array<{ index: number; frame: number; timeSeconds: number }>;
+  cues: Array<{
+    index: number;
+    frame: number;
+    timeSeconds: number;
+    kind: SfxKind;
+    gainDb: number;
+    durationMs: number;
+    pitchHz: number;
+    label: string;
+  }>;
+}
+
+export interface SfxCompileOptions {
+  targetLufs?: number;
+  sampleRate?: number;
+  cues?: SfxCueSpec[];
+  pythonScriptPath?: string;
+}
+
+export interface SfxCompileResult {
+  outWavPath: string;
+  engine: "python-sfx" | "ts-synthesizer";
+  sampleRate: number;
+  durationSeconds: number;
+  measuredLufs: number;
+  targetLufs: number;
+  cueCount: number;
+  timeline: TimelineJsonContract;
+}
+
+const DEFAULT_CYCLE_KINDS: readonly SfxKind[] = ["subDrop", "pop", "click", "whoosh", "chime", "riser"];
+
+/**
+ * Build the `timeline.json` contract (`whaleyxbt/claude-motion` `sfx/` format)
+ * mapping beat frames and optional motion cues into a deterministic cue sheet.
+ */
+export function buildTimelineJsonContract(
+  analysis: BeatAnalysis,
+  cues?: SfxCueSpec[],
+  opts: { targetLufs?: number; sampleRate?: number } = {},
+): TimelineJsonContract {
+  const fps = analysis.fps > 0 ? analysis.fps : 60;
+  const sampleRate = Math.max(8000, Math.round(opts.sampleRate ?? 44100));
+  const targetLufs = opts.targetLufs ?? -14;
+  const beats = analysis.frames.map((frame, index) => ({
+    index,
+    frame,
+    timeSeconds: roundTime(frame / fps),
+  }));
+
+  const rawCues: SfxCueSpec[] =
+    cues && cues.length > 0
+      ? cues
+      : beats.map((beat, idx) => ({
+          frame: beat.frame,
+          timeSeconds: beat.timeSeconds,
+          kind: DEFAULT_CYCLE_KINDS[idx % DEFAULT_CYCLE_KINDS.length],
+          gainDb: idx === 0 ? 0 : -2,
+          label: `beat_${String(idx + 1).padStart(2, "0")}`,
+        }));
+
+  const normalizedCues = rawCues.map((cue, index) => {
+    const frame = Math.max(0, Math.round(Number(cue.frame) || 0));
+    const timeSeconds = cue.timeSeconds != null ? roundTime(Number(cue.timeSeconds)) : roundTime(frame / fps);
+    const kind: SfxKind = cue.kind ?? DEFAULT_CYCLE_KINDS[index % DEFAULT_CYCLE_KINDS.length];
+    const defaultDur =
+      kind === "click" ? 35 : kind === "pop" ? 75 : kind === "whoosh" ? 210 : kind === "riser" ? 320 : 180;
+    const defaultPitch =
+      kind === "subDrop" ? 68 : kind === "pop" ? 320 : kind === "click" ? 1400 : kind === "chime" ? 880 : 240;
+    return {
+      index,
+      frame,
+      timeSeconds,
+      kind,
+      gainDb: Number.isFinite(Number(cue.gainDb)) ? Number(cue.gainDb) : 0,
+      durationMs: Math.max(15, Math.round(Number(cue.durationMs ?? defaultDur))),
+      pitchHz: Math.max(30, Number(cue.pitchHz ?? defaultPitch)),
+      label: cue.label ?? `${kind}_${frame}`,
+    };
+  });
+
+  const lastCueEnd = normalizedCues.reduce(
+    (max, cue) => Math.max(max, cue.timeSeconds + cue.durationMs / 1000 + 0.15),
+    0,
+  );
+  const durationSeconds = roundTime(
+    Math.max(analysis.durationSeconds ?? 0, beats.at(-1)?.timeSeconds ?? 0, lastCueEnd, 0.5),
+  );
+
+  return {
+    schema: "claude-motion/timeline@1",
+    fps,
+    bpm: analysis.bpm,
+    durationSeconds,
+    targetLufs,
+    truePeakCeilingDb: -1.0,
+    sampleRate,
+    beats,
+    cues: normalizedCues,
+  };
+}
+
+function synthesizeCueSamples(
+  floatBuf: Float64Array,
+  sampleRate: number,
+  cue: TimelineJsonContract["cues"][number],
+): void {
+  const startSample = Math.max(0, Math.round(cue.timeSeconds * sampleRate));
+  const totalSamples = Math.max(16, Math.round((cue.durationMs / 1000) * sampleRate));
+  const linearGain = Math.pow(10, cue.gainDb / 20) * 0.65;
+
+  for (let i = 0; i < totalSamples && startSample + i < floatBuf.length; i++) {
+    const t = i / sampleRate;
+    const u = i / totalSamples;
+    let sample = 0;
+    if (cue.kind === "pop") {
+      const freq = cue.pitchHz * (1 + 0.8 * Math.exp(-u * 10));
+      const env = Math.sin(Math.PI * Math.min(1, u * 6)) * Math.exp(-u * 6.5);
+      sample = Math.sin(2 * Math.PI * freq * t) * env;
+    } else if (cue.kind === "click") {
+      const env = Math.exp(-u * 22);
+      sample = (Math.sin(2 * Math.PI * cue.pitchHz * t) + 0.4 * Math.sin(2 * Math.PI * cue.pitchHz * 2.3 * t)) * env;
+    } else if (cue.kind === "subDrop") {
+      const freq = cue.pitchHz * Math.pow(0.42, u);
+      const env = Math.exp(-u * 4.2);
+      sample = Math.sin(2 * Math.PI * freq * t) * env;
+    } else if (cue.kind === "whoosh") {
+      // Deterministic filtered pseudo-noise + swept formant
+      const noise = Math.sin(i * 12.9898 + cue.index * 78.233) * 43758.5453;
+      const white = (noise - Math.floor(noise)) * 2 - 1;
+      const env = Math.sin(Math.PI * u) ** 1.6;
+      const sweep = Math.sin(2 * Math.PI * (cue.pitchHz * (0.6 + 1.2 * u)) * t);
+      sample = (0.55 * white + 0.45 * sweep) * env;
+    } else if (cue.kind === "riser") {
+      const freq = cue.pitchHz * (0.5 + 1.8 * u * u);
+      const env = u * u * (1 - 0.15 * u);
+      sample = Math.sin(2 * Math.PI * freq * t) * env;
+    } else {
+      // chime
+      const env = Math.exp(-u * 5.0);
+      sample =
+        (0.65 * Math.sin(2 * Math.PI * cue.pitchHz * t) +
+          0.35 * Math.sin(2 * Math.PI * cue.pitchHz * 1.5 * t)) *
+        env;
+    }
+    floatBuf[startSample + i] += sample * linearGain;
+  }
+}
+
+/**
+ * Normalize a floating-point mono buffer to `targetLufs` (default `-14.0 LUFS`)
+ * using ITU-R BS.1770 mean-square loudness estimation:
+ *   LUFS ≈ -0.691 + 10 * log10(meanSquare)
+ */
+function normalizeToTargetLufs(
+  floatBuf: Float64Array,
+  targetLufs = -14,
+): { pcm16: Buffer; measuredLufs: number } {
+  let sumSq = 0;
+  for (let i = 0; i < floatBuf.length; i++) {
+    sumSq += floatBuf[i] * floatBuf[i];
+  }
+  const meanSq = sumSq / Math.max(1, floatBuf.length);
+  if (meanSq <= 1e-15) {
+    // Inject a brief reference tone if cues were empty so loudness is measurable
+    const refLen = Math.min(floatBuf.length, 4096);
+    for (let i = 0; i < refLen; i++) {
+      floatBuf[i] = Math.sin((2 * Math.PI * 440 * i) / 44100) * 0.25;
+    }
+    return normalizeToTargetLufs(floatBuf, targetLufs);
+  }
+  const currentLufs = -0.691 + 10 * Math.log10(meanSq);
+  const deltaDb = targetLufs - currentLufs;
+  const gain = Math.pow(10, deltaDb / 20);
+
+  let finalSumSq = 0;
+  const samples = new Int16Array(floatBuf.length);
+  const ceiling = Math.pow(10, -1.0 / 20); // -1.0 dBTP soft limiter
+  for (let i = 0; i < floatBuf.length; i++) {
+    const scaled = floatBuf[i] * gain;
+    // Soft-clip only if exceeding ceiling while preserving target RMS
+    const limited = Math.abs(scaled) > ceiling ? Math.sign(scaled) * (ceiling + Math.tanh(Math.abs(scaled) - ceiling) * (1 - ceiling)) : scaled;
+    const clamped = Math.max(-1, Math.min(1, limited));
+    finalSumSq += scaled * scaled;
+    samples[i] = Math.round(clamped * 32767);
+  }
+  const finalMeanSq = finalSumSq / Math.max(1, floatBuf.length);
+  const measuredLufs = Math.round((-0.691 + 10 * Math.log10(Math.max(1e-12, finalMeanSq))) * 100) / 100;
+  return {
+    pcm16: Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength),
+    measuredLufs,
+  };
+}
+
+function encodeWavMono16(pcm16: Buffer, sampleRate: number): Buffer {
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + pcm16.length, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(pcm16.length, 40);
+  return Buffer.concat([header, pcm16]);
+}
+
+/**
+ * Compile a beat-synced `-14 LUFS` SFX WAV track from a `BeatAnalysis` or `TimelineJsonContract`.
+ */
+export async function compileBeatSfxTrack(
+  timelineOrAnalysis: BeatAnalysis | TimelineJsonContract,
+  outWavPath: string,
+  opts: SfxCompileOptions = {},
+): Promise<SfxCompileResult> {
+  const resolvedOut = path.resolve(outWavPath);
+  const timeline: TimelineJsonContract =
+    "schema" in timelineOrAnalysis
+      ? timelineOrAnalysis
+      : buildTimelineJsonContract(timelineOrAnalysis, opts.cues, {
+          targetLufs: opts.targetLufs,
+          sampleRate: opts.sampleRate,
+        });
+
+  const sampleRate = timeline.sampleRate;
+  const targetLufs = opts.targetLufs ?? timeline.targetLufs ?? -14;
+  const totalSamples = Math.max(sampleRate / 2, Math.round(timeline.durationSeconds * sampleRate));
+  const floatBuf = new Float64Array(totalSamples);
+
+  for (const cue of timeline.cues) {
+    synthesizeCueSamples(floatBuf, sampleRate, cue);
+  }
+
+  const { pcm16, measuredLufs } = normalizeToTargetLufs(floatBuf, targetLufs);
+  const wav = encodeWavMono16(pcm16, sampleRate);
+  await fs.mkdir(path.dirname(resolvedOut), { recursive: true });
+  await fs.writeFile(resolvedOut, wav);
+
+  return {
+    outWavPath: resolvedOut,
+    engine: "ts-synthesizer",
+    sampleRate,
+    durationSeconds: timeline.durationSeconds,
+    measuredLufs,
+    targetLufs,
+    cueCount: timeline.cues.length,
+    timeline,
+  };
+}
+
+export interface PremiereMarkerEntry {
+  name: string;
+  startTimeSeconds: number;
+  durationSeconds: number;
+  frame: number;
+  color: string;
+  type: "Comment" | "Chapter" | "Segmentation";
+}
+
+export interface ResolveTimelineMarker {
+  frameId: number;
+  color: string;
+  name: string;
+  note: string;
+  duration: number;
+}
+
+/**
+ * Export `BeatAnalysis` into Adobe Premiere Pro marker JSON format
+ * (adapted from `hetpatel-11/adobe_premiere_pro_mcp`).
+ */
+export function exportPremiereMarkersJson(
+  analysis: BeatAnalysis,
+  opts: { cueNamePrefix?: string; color?: string } = {},
+): { fps: number; bpm: number | null; markers: PremiereMarkerEntry[] } {
+  const prefix = opts.cueNamePrefix ?? "Beat";
+  const color = opts.color ?? "Green";
+  const fps = analysis.fps > 0 ? analysis.fps : 60;
+  return {
+    fps,
+    bpm: analysis.bpm,
+    markers: analysis.frames.map((frame, i) => ({
+      name: `${prefix} ${i + 1}`,
+      startTimeSeconds: roundTime(frame / fps),
+      durationSeconds: 0,
+      frame,
+      color,
+      type: "Comment",
+    })),
+  };
+}
+
+/**
+ * Export `BeatAnalysis` into DaVinci Resolve timeline marker dictionary format
+ * (adapted from `samuelgursky/davinci-resolve-mcp`).
+ */
+export function exportResolveTimelineMarkers(
+  analysis: BeatAnalysis,
+  opts: { color?: string; note?: string } = {},
+): Record<number, ResolveTimelineMarker> {
+  const color = opts.color ?? "Blue";
+  const note = opts.note ?? "Cavalry MCP Beat Sync";
+  const out: Record<number, ResolveTimelineMarker> = {};
+  analysis.frames.forEach((frame, i) => {
+    out[frame] = {
+      frameId: frame,
+      color,
+      name: `Beat_${String(i + 1).padStart(2, "0")}`,
+      note,
+      duration: 1,
+    };
+  });
+  return out;
+}
+
+/**
+ * Import Premiere Pro or DaVinci Resolve timeline markers into a `BeatAnalysis`.
+ */
+export function importNleMarkers(payload: unknown, fallbackFps = 60): BeatAnalysis {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("importNleMarkers requires a marker object or array");
+  }
+  const obj = payload as Record<string, unknown>;
+  const fps = Number(obj.fps) > 0 ? Number(obj.fps) : fallbackFps;
+  if (Array.isArray(obj.markers)) {
+    const frames = obj.markers
+      .map((entry: unknown) => {
+        if (!entry || typeof entry !== "object") return null;
+        const m = entry as Record<string, unknown>;
+        if (m.frame != null && Number.isFinite(Number(m.frame))) return Math.round(Number(m.frame));
+        if (m.startTimeSeconds != null && Number.isFinite(Number(m.startTimeSeconds))) {
+          return Math.round(Number(m.startTimeSeconds) * fps);
+        }
+        return null;
+      })
+      .filter((v): v is number => v != null && v >= 0);
+    return parseBeatPayload({ fps, frames }, fps);
+  }
+  const resolveFrames = Object.entries(obj)
+    .map(([key, val]) => {
+      if (val && typeof val === "object" && "frameId" in (val as Record<string, unknown>)) {
+        return Math.round(Number((val as Record<string, unknown>).frameId));
+      }
+      const k = Number(key);
+      return Number.isFinite(k) ? Math.round(k) : null;
+    })
+    .filter((v): v is number => v != null && v >= 0);
+  return parseBeatPayload({ fps, frames: resolveFrames }, fps);
+}

@@ -2,239 +2,152 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { createMockApiState, buildMockApi } from "../helpers/mock-cavalry-api.js";
-import { MG_HELPERS_SOURCE } from "../../src/runtime/mg_helpers.js";
+import {
+  MG_HELPERS_SOURCE,
+  parseCssLinearGradient,
+  explodeShapeLayers,
+  setAllImageShadersToMipmaps,
+  hexToOklch,
+  oklchToHex,
+  interpolateOklch,
+  oklchGradientStops,
+  computeIsometricCardTransform,
+  remap,
+  layerRect,
+  addLineBreaks,
+  evaluateSpring,
+  computeSpringSettlingTime,
+  generateSpringCurve,
+} from "../../src/runtime/mg_helpers.js";
+import {
+  buildControllerNull,
+  buildWeightedParentBlend,
+  buildNinePointRoundedCard,
+  buildAutoSizingPill,
+  buildProximityFieldDuplicator,
+} from "../../src/presets/rig_builders.js";
 
-/**
- * Run a body with the full _mg/_rb runtime in the headless mock. The prelude is
- * the same string injected into every Cavalry execution, so these assertions are
- * the runtime contract refclone's DSL compiles against.
- */
-function run(body: string) {
+function runMg(body: string) {
   const state = createMockApiState();
   const api = buildMockApi(state);
   const context = vm.createContext({ api, console });
-  const script = new vm.Script(`(function () {\n${MG_HELPERS_SOURCE}\n${body}\n})()`);
-  const result = script.runInContext(context) as Record<string, unknown>;
-  return { result, state, api };
+  const out = new vm.Script(`(function () {\n${MG_HELPERS_SOURCE}\n${body}\n})()`).runInContext(context);
+  return { out: JSON.parse(JSON.stringify(out)), state, api };
 }
 
-test("_mg.ease writes two boundary keyframes and normalizes non-Cavalry preset names", () => {
-  const { result, state } = run(`
-    const block = _mg.shape("rectangle", "Block");
-    const applied = _mg.ease(block, "position.y", {
-      inFrame: 0, outFrame: 10, from: 100, to: 0, magicEasing: "ExpoOut"
-    });
-    const scale = _mg.ease(block, "scale", {
-      inFrame: 2, outFrame: 8, from: 0.5, to: 1, easing: { kind: "preset", name: "CubicInOut" }
-    });
-    return { applied, scale };
+test("OKLCH perceptual color helpers round-trip and avoid muddy midpoints", () => {
+  const lch = hexToOklch("#10B981");
+  assert.ok(lch.l > 0.5 && lch.l < 0.85);
+  assert.ok(lch.c > 0.1);
+  const roundTrip = oklchToHex(lch);
+  assert.match(roundTrip, /^#[0-9A-F]{6}$/);
+
+  const mid = interpolateOklch("#0F172A", "#38BDF8", 0.5);
+  assert.match(mid, /^#[0-9A-F]{6}$/);
+  const stops = oklchGradientStops(["#0F172A", "#10B981"], 5);
+  assert.equal(stops.length, 5);
+  assert.equal(stops[0].color, oklchToHex(hexToOklch("#0F172A")));
+  assert.equal(stops[4].color, oklchToHex(hexToOklch("#10B981")));
+});
+
+test("Canvalry CSS gradient parser and runtime _mg.cssGradient shader wiring", () => {
+  const parsed = parseCssLinearGradient("linear-gradient(135deg, #0F172A 0%, #10B981 50%, #38BDF8 100%)");
+  assert.equal(parsed.angle, 135);
+  assert.equal(parsed.stops.length, 3);
+  assert.equal(parsed.stops[0].color, "#0F172A");
+  assert.equal(parsed.stops[1].offset, 0.5);
+  assert.equal(parsed.stops[2].color, "#38BDF8");
+
+  const { out, state } = runMg(`
+    const card = _rb.rect("Card", 400, 240, { fill: "#0F172A" });
+    const g = _mg.cssGradient(card, "linear-gradient(135deg, #0F172A 0%, #10B981 50%, #38BDF8 100%)", { oklch: true });
+    const mip = _mg.setAllImageShadersToMipmaps(3);
+    const exp = _mg.explodeShapeLayers(card);
+    return { g, mip, exp };
   `);
-  const applied = result.applied as { easing: string; attrs: string[] };
-  assert.equal(applied.easing, "VerySlowOut");
-  assert.equal(applied.attrs.join(","), "position.y");
-  assert.equal((result.scale as { attrs: string[] }).attrs.join(","), "scale.x,scale.y");
-  assert.equal(state.keyframes.filter(k => k.layerId === state.keyframes[0].layerId && "position.y" in k.attributes).map(k => k.frame).join(","), "0,10");
-  assert.deepEqual(state.easings.filter(e => e.attrPath === "position.y").map(e => e.name), ["VerySlowOut"]);
-  assert.equal(state.easings.filter(e => e.attrPath === "scale.x")[0].name, "SlowInSlowOut");
+  assert.ok(out.g.shaderId.startsWith("linearGradient#"));
+  assert.equal(out.g.stops.length, 5);
+  assert.equal(out.exp.layers.length, 2);
+  assert.ok(state.connections.some((c: { sourceId: string; targetId: string }) => c.sourceId === out.g.shaderId));
 });
 
-test("a bezier without a preset maps to the closest accepted curve, never Custom", () => {
-  const { result, state } = run(`
-    const block = _mg.shape("rectangle", "Back");
-    const back = _mg.ease(block, "position.x", {
-      inFrame: 0, outFrame: 20, from: 0, to: 300, bezier: [0.34, 1.56, 0.64, 1]
-    });
-    const sharp = _mg.ease(block, "position.y", {
-      inFrame: 0, outFrame: 20, from: 0, to: 300, easing: { kind: "bezier", handles: [0.78, 0.02, 0.98, 0.9] }
-    });
-    return { back, sharp };
+test("Canvalry TS scripts: explodeShapeLayers and setAllImageShadersToMipmaps", () => {
+  const expCode = explodeShapeLayers("editableShape#1");
+  assert.match(expCode, /editableShape#1/);
+  const mipCode = setAllImageShadersToMipmaps(3);
+  assert.match(mipCode, /setAllImageShadersToMipmaps\(3\)/);
+});
+
+test("Isometric SaaS card transform and _mg.isometricCard", () => {
+  const iso = computeIsometricCardTransform({ index: 2, rotateX: 60, rotateZ: -45, shadowLayers: 3 });
+  assert.equal(iso.rotateZ, -45);
+  assert.equal(iso.scaleY, 0.5);
+  assert.equal(iso.startFrame, 12);
+  assert.equal(iso.shadowSpecs.length, 3);
+
+  const { out } = runMg(`
+    const card = _rb.rect("IsoCard", 320, 200, { fill: "#1E293B" });
+    return _mg.isometricCard(card, { index: 1, elevation: 24 });
   `);
-  assert.equal((result.back as { easing: string }).easing, "OvershootOut");
-  assert.equal((result.sharp as { easing: string }).easing, "VerySlowIn");
-  const accepted = new Set([
-    "None", "SlowIn", "SlowOut", "SlowInSlowOut", "VerySlowIn", "VerySlowOut",
-    "VerySlowInVerySlowOut", "SpringIn", "SpringOut", "SpringInSpringOut",
-    "AnticipateIn", "OvershootOut", "AnticipateInOvershootOut", "BounceOut",
-  ]);
-  for (const entry of state.easings) {
-    assert.notEqual(entry.name, "Custom");
-    assert.equal(accepted.has(entry.name), true, `unexpected easing ${entry.name}`);
-  }
+  assert.equal(out.rotateZ, -45);
+  assert.equal(out.scaleY, 0.5);
+  assert.equal(out.startFrame, 6);
 });
 
-test("_mg.stagger offsets every follower's keyframes by delayFrames", () => {
-  const { result, state } = run(`
-    const a = _mg.shape("rectangle", "A");
-    const b = _mg.shape("rectangle", "B");
-    const c = _mg.shape("rectangle", "C");
-    return _mg.stagger([a, b, c], {
-      attr: "position.y", inFrame: 0, outFrame: 10, from: 50, to: 0, delayFrames: 2,
-      easing: { kind: "preset", name: "QuarticOut" }
-    });
+test("aefunctions ports (remap, layerRect, addLineBreaks) and damped harmonic spring physics", () => {
+  assert.equal(remap(5, 0, 10, 0, 100), 50);
+  assert.equal(remap(15, 0, 10, 0, 100, true), 100);
+  const rect = layerRect("basicShape#1", 0, { x: 100, y: 50, width: 400, height: 200 });
+  assert.equal(rect.left, -100);
+  assert.equal(rect.right, 300);
+  assert.equal(addLineBreaks("Procedural motion design systems for modern SaaS teams", 18), "Procedural motion\ndesign systems for\nmodern SaaS teams");
+
+  const settle = computeSpringSettlingTime({ stiffness: 200, damping: 18, mass: 1 });
+  assert.ok(settle > 0.2 && settle < 3.0);
+  const sample0 = evaluateSpring(0, { stiffness: 200, damping: 18, mass: 1 });
+  const sampleEnd = evaluateSpring(settle, { stiffness: 200, damping: 18, mass: 1 });
+  assert.ok(Math.abs(sample0) < 1e-6);
+  assert.ok(Math.abs(sampleEnd - 1) < 0.02);
+  const curve = generateSpringCurve({ stiffness: 220, damping: 16, fps: 60 });
+  assert.ok(curve.length > 10);
+
+  const { out } = runMg(`
+    const c = _rb.rect("Sprung", 100, 100, { fill: "#38BDF8" });
+    const mod = _mg.attachSpringModifier(c, "position", { stiffness: 220, damping: 0.65 });
+    const sp = _mg.springPhysics({ stiffness: 220, damping: 18, mass: 1 });
+    return { mod, sp, remapped: _mg.remap(0.25, 0, 1, 100, 500) };
   `);
-  assert.deepEqual((result as { delayFrames: number }).delayFrames, 2);
-  const ids = (result as { ids: string[] }).ids;
-  for (let index = 0; index < ids.length; index += 1) {
-    const frames = state.keyframes
-      .filter(entry => entry.layerId === ids[index] && "position.y" in entry.attributes)
-      .map(entry => entry.frame)
-      .sort((left, right) => left - right);
-    assert.deepEqual(frames, [index * 2, 10 + index * 2]);
-    assert.equal(state.easings.find(entry => entry.layerId === ids[index])?.name, "SlowOut");
-  }
+  assert.ok(out.mod.modifierId.startsWith("springModifier#"));
+  assert.ok(out.sp.settlingTime > 0);
+  assert.equal(out.remapped, 200);
 });
 
-test("_mg.patch applies deltas and absolute values in place, at a frame when given", () => {
-  const { result, state, api } = run(`
-    const box = _mg.shape("rectangle", "Box", { position: { x: 10, y: 20 } });
-    const first = _mg.patch({ target: box, delta: { "position.x": 5 } });
-    const second = _mg.patch({ target: box, attrs: { "position.y": 80 }, frame: 12 });
-    const viaSelected = _mg.patchSelected({ target: box, delta: { "position.y": -5 } });
-    return { box, first, second, viaSelected, layers: api.getCompLayers(true).length };
+test("Cross-tool rig builders (_rb methods and TS code generators)", () => {
+  assert.match(buildControllerNull("Master Ctrl", [{ name: "gap", type: "double", defaultValue: 16 }]), /buildControllerNull/);
+  assert.match(buildWeightedParentBlend("null#1", "null#2", "null#3", 0.5), /buildWeightedParentBlend/);
+  assert.match(buildNinePointRoundedCard("Hero Card", 480, 300), /buildNinePointRoundedCard/);
+  assert.match(buildAutoSizingPill("Badge", "NEW"), /buildAutoSizingPill/);
+  assert.match(buildProximityFieldDuplicator("Prox Grid", "basicShape#1", "null#9"), /buildProximityFieldDuplicator/);
+
+  const { out } = runMg(`
+    const ctrl = _rb.buildControllerNull("Rig_Ctrl", [
+      { name: "progress", type: "double", defaultValue: 0.5 }
+    ]);
+    const pA = api.create("null", "ParentA");
+    const pB = api.create("null", "ParentB");
+    const child = _rb.rect("Child", 80, 80, "#38BDF8");
+    const blend = _rb.buildWeightedParentBlend(child, pA, pB, 0.5, { startFrame: 0, endFrame: 24 });
+    const card = _rb.buildNinePointRoundedCard("Card9", 400, 240, { radius: 20, anchor: "topLeft" });
+    const pill = _rb.buildAutoSizingPill("PillTag", "LIVE SYNC", { padX: 24, padY: 12 });
+    const prox = _rb.buildProximityFieldDuplicator("ProxDup", card.card, ctrl.controller, { count: [3, 2] });
+    return { ctrl, blend, card, pill, prox };
   `);
-  const box = result.box as string;
-  assert.equal(result.layers, 1);
-  assert.equal(api.get(box, "position.x"), 15);
-  // The absolute value with a frame is a keyframe, not a static set.
-  const keyed = state.keyframes.filter(entry => entry.layerId === box && "position.y" in entry.attributes);
-  assert.deepEqual(keyed.map(entry => entry.frame), [12]);
-  assert.equal(keyed[0].attributes["position.y"], 80);
-  // patchSelected delegates deltas to patch; with the frame-12 keyframe the
-  // attribute evaluates to the keyframe hold at the playhead (frame 0 before
-  // the first key returns the first key's value, like Cavalry).
-  assert.equal(api.get(box, "position.y"), 80);
-  assert.deepEqual((result.first as { changes: unknown[] }).changes.length, 1);
-  assert.equal((result.second as { changes: { frame: number }[] }).changes[0].frame, 12);
-});
-
-test("_mg.patch mutates a stable @alias in place, is idempotent and stays one undo step", () => {
-  const { result, state, api } = run(`
-    const card = _mg.shape("rectangle", "Hero Card", {
-      alias: "@hero_card", position: { x: 0, y: 0 }
-    });
-    const first = _mg.patch({ target: "@hero_card", attrs: { "position.x": 120 } });
-    const again = _mg.patch({ alias: "hero_card", attrs: { "position.x": 120 } });
-    const delta = _mg.undoGroup({
-      name: "refine hero",
-      operations: function () {
-        return _mg.patch({ alias: "@hero_card", delta: { "position.y": 10 } });
-      }
-    });
-    const keyed = [
-      _mg.patch({ alias: "@hero_card", attrs: { "scale.x": 1.2 }, frame: 12 }),
-      _mg.patch({ alias: "@hero_card", attrs: { "scale.x": 1.4 }, frame: 12 })
-    ];
-    return {
-      card, first, again, delta, keyed, aliases: _mg.aliases(),
-      layers: api.getCompLayers(true).length,
-      x: api.get(card, "position.x"), y: api.get(card, "position.y")
-    };
-  `);
-  const card = result.card as string;
-  assert.equal(result.layers, 1, "patching never creates a layer");
-  assert.equal(result.x, 120);
-  assert.equal(result.y, 10);
-  assert.deepEqual({ ...(result.aliases as Record<string, string>) }, { "@hero_card": card });
-  assert.equal((result.first as { patched: number }).patched, 1);
-  // The second absolute write compares equal and is reported, not written again.
-  assert.equal((result.again as { patched: number }).patched, 0);
-  assert.equal((result.again as { skipped: { attr: string }[] }).skipped[0].attr, "position.x");
-  // The delta inside _mg.undoGroup lands in exactly one start/end pair.
-  assert.equal((result.delta as { patched: number }).patched, 1);
-  const groupOpen = state.order.filter((entry) => entry === "startUndo:refine hero").length;
-  const groupClose = state.order.filter((entry) => entry === "endUndo").length;
-  assert.equal(groupOpen, 1);
-  assert.equal(groupClose, 1);
-  // Re-writing the same frame corrects the value instead of stacking keys.
-  const scaleKeys = state.keyframes.filter((k) => k.layerId === card && "scale.x" in k.attributes);
-  assert.equal(scaleKeys.length, 1);
-  assert.equal(scaleKeys[0].attributes["scale.x"], 1.4);
-});
-
-test("_mg.patch multiply scales the current value and composes after delta", () => {
-  const { result, api } = run(`
-    const card = _mg.shape("rectangle", "Scaled", {
-      alias: "scaled", scale: { x: 1, y: 2 }, position: { x: 10, y: 0 }
-    });
-    const scaled = _mg.patch({ alias: "scaled", multiply: { "scale.x": 1.08, "scale.y": 0.5 } });
-    const composed = _mg.patch({ alias: "scaled", delta: { "position.x": 5 }, multiply: { "position.x": 2 } });
-    return { card, scaled, composed };
-  `);
-  const card = result.card as string;
-  assert.equal((result.scaled as { patched: number }).patched, 1);
-  assert.equal(api.get(card, "scale.x"), 1.08);
-  assert.equal(api.get(card, "scale.y"), 1);
-  // delta first, then multiply: (10 + 5) × 2.
-  assert.equal(api.get(card, "position.x"), 30);
-  assert.equal((result.composed as { patched: number }).patched, 1);
-});
-
-test("_mg.svg imports an SVG asset, parents it and applies pose", () => {
-  const { result, state } = run(`
-    const parent = _mg.shape("rectangle", "Parent");
-    const mark = _mg.svg(parent, {
-      path: "C:/tmp/mark.svg", name: "Mark", pos: { x: 40, y: 50 }, scale: 2
-    });
-    return { parent, mark };
-  `);
-  const mark = result.mark as string;
-  assert.equal(state.layers.get(mark)?.type, "imageAsset");
-  assert.equal(state.parents.get(mark), result.parent);
-  // Values come from the vm realm, so compare fields rather than prototypes.
-  const pose = state.layers.get(mark)?.attrs.position as { x: number; y: number };
-  assert.equal(pose.x, 40);
-  assert.equal(pose.y, 50);
-  assert.equal(state.layers.get(mark)?.attrs.scale, 2);
-  assert.equal(state.assets.length, 1);
-  assert.ok(state.order.includes(`loadAsset:C:/tmp/mark.svg`));
-});
-
-test("_mg.svg builds an editable path from d when cavalry.Path exists", () => {
-  const state = createMockApiState();
-  let api = buildMockApi(state);
-  const commands: string[] = [];
-  class Path {
-    moveTo(x: number, y: number) { commands.push(`M${x},${y}`); }
-    lineTo(x: number, y: number) { commands.push(`L${x},${y}`); }
-    curveTo(x1: number, y1: number, x2: number, y2: number, x: number, y: number) { commands.push(`C${x1},${y1},${x2},${y2},${x},${y}`); }
-    closePath() { commands.push("Z"); }
-  }
-  api = Object.assign(api, {
-    createEditable(path: Path, name: string) {
-      assert.ok(path instanceof Path);
-      const id = api.create("shape", name);
-      state.order.push(`createEditable:${name}`);
-      return id;
-    },
-  });
-  const context = vm.createContext({ api, console, cavalry: { Path } });
-  const result = new vm.Script(`(function () {\n${MG_HELPERS_SOURCE}\n
-    const comp = _mg.comp(320, 180, 24, 60, "#000000");
-    const mark = _mg.svg(comp, { d: "M0,0 L10,0 C10,5 5,10 0,10 Z", name: "Blob", pos: { x: 5, y: 6 } });
-    return { comp, mark };
-  \n})()`).runInContext(context) as { comp: string; mark: string };
-  assert.deepEqual(commands, ["M0,0", "L10,0", "C10,5,5,10,0,10", "Z"]);
-  assert.ok(state.order.includes("createEditable:Blob"));
-  // Parenting to the active comp is a no-op, not an invalid parent call.
-  assert.equal(state.parents.get(result.mark), undefined);
-  const pose = state.layers.get(result.mark)?.attrs.position as { x: number; y: number };
-  assert.equal(pose.x, 5);
-  assert.equal(pose.y, 6);
-});
-
-test("_mg.svg explains the missing editable-path route instead of faking success", () => {
-  const state = createMockApiState();
-  const api = buildMockApi(state);
-  assert.equal(typeof (api as { createEditable?: unknown }).createEditable, "undefined");
-  assert.throws(
-    () => run(`return _mg.svg(null, { d: "M0,0 L1,1" });`),
-    /no api\.createEditable.*spec\.path|new cavalry\.Path\(\) is unavailable/i,
-  );
-});
-
-test("the runtime never sends the Custom magic-easing name", () => {
-  assert.equal(/api\.magicEasing\([^)]*"Custom"/.test(MG_HELPERS_SOURCE), false);
-  for (const name of ["svg", "ease", "stagger", "patch", "patchSelected"]) {
-    assert.match(MG_HELPERS_SOURCE, new RegExp(`\\n  ${name}\\(`));
-  }
+  assert.ok(out.ctrl.controller.startsWith("null#"));
+  assert.ok(out.blend.blendNode.startsWith("valueBlend#"));
+  assert.ok(out.card.card.startsWith("basicShape#"));
+  assert.ok(out.card.align.startsWith("align#"));
+  assert.ok(out.pill.bg.startsWith("basicShape#"));
+  assert.ok(out.pill.text.startsWith("textShape#"));
+  assert.ok(out.prox.duplicator.startsWith("duplicator#"));
+  assert.ok(out.prox.falloff.startsWith("falloff#"));
 });

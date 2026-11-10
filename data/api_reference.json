@@ -1,0 +1,262 @@
+[
+  {
+    "name": "api.create",
+    "signature": "api.create(layerType: string, name?: string): string",
+    "context": ["script", "plugin"],
+    "params": [
+      { "name": "layerType", "type": "string", "description": "Canonical Cavalry node type (e.g. 'textShape', 'duplicator', 'null', 'strokeMaterial')." },
+      { "name": "name", "type": "string", "description": "Optional nice name for the created layer." }
+    ],
+    "returns": "string (layerId, e.g. 'textShape#1')",
+    "description": "Creates a new layer or node of the specified type in the active composition. Note: new layers inherit the current selection as parent unless api.select([]) is called first.",
+    "example": "api.select([]); const id = api.create('textShape', 'Headline');",
+    "deprecated": false
+  },
+  {
+    "name": "api.primitive",
+    "signature": "api.primitive(shapeType: string, name?: string): string",
+    "context": ["script", "plugin"],
+    "params": [
+      { "name": "shapeType", "type": "string", "description": "Primitive generator type: 'rectangle', 'ellipse', 'star', 'polygon', 'ring', 'arc'." },
+      { "name": "name", "type": "string", "description": "Display name for the created basicShape layer." }
+    ],
+    "returns": "string (layerId, e.g. 'basicShape#1')",
+    "description": "Creates a parametric basicShape layer pre-configured with the specified primitive generator.",
+    "example": "const card = api.primitive('rectangle', 'Card'); api.set(card, { 'generator.dimensions': [320, 180] });",
+    "deprecated": false
+  },
+  {
+    "name": "api.createEditable",
+    "signature": "api.createEditable(path: cavalry.Path, name?: string): string",
+    "context": ["script", "plugin"],
+    "params": [
+      { "name": "path", "type": "cavalry.Path", "description": "Constructed cavalry.Path geometry." },
+      { "name": "name", "type": "string", "description": "Display name for the editableShape layer." }
+    ],
+    "returns": "string (editableShape#id)",
+    "description": "Creates an editable bezier vector layer from a cavalry.Path instance.",
+    "example": "const p = new cavalry.Path(); p.moveTo(0, 0); p.lineTo(100, 0); const id = api.createEditable(p, 'Line');",
+    "deprecated": false
+  },
+  {
+    "name": "api.get",
+    "signature": "api.get(layerId: string, attrPath: string): unknown",
+    "context": ["script", "plugin", "render"],
+    "params": [
+      { "name": "layerId", "type": "string", "description": "Target layer ID." },
+      { "name": "attrPath", "type": "string", "description": "Dot-separated attribute path (e.g. 'position.x', 'material.materialColor', 'fontSize')." }
+    ],
+    "returns": "unknown",
+    "description": "Reads the evaluated value of an attribute on a layer at the current playhead frame.",
+    "example": "const fontSize = api.get('textShape#1', 'fontSize');",
+    "deprecated": false
+  },
+  {
+    "name": "api.set",
+    "signature": "api.set(layerId: string, attributes: Record<string, unknown>): void",
+    "context": ["script", "plugin"],
+    "params": [
+      { "name": "layerId", "type": "string", "description": "Target layer ID." },
+      { "name": "attributes", "type": "Record<string, unknown>", "description": "Attribute map. Compound/color attributes must be sent in separate api.set calls." }
+    ],
+    "returns": "void",
+    "description": "Sets one or more static attribute values on a layer. Split compound attributes (position, scale, generator.dimensions, material.materialColor) into individual api.set calls.",
+    "example": "api.set(id, { 'generator.cornerRadius': 16, opacity: 100 });",
+    "deprecated": false
+  },
+  {
+    "name": "api.setGenerator",
+    "signature": "api.setGenerator(layerId: string, attrPath: string, generatorType: string): void",
+    "context": ["script", "plugin"],
+    "params": [
+      { "name": "layerId", "type": "string", "description": "Host layer ID (e.g. 'duplicator#1')." },
+      { "name": "attrPath", "type": "string", "description": "Generator slot attribute (usually 'generator')." },
+      { "name": "generatorType", "type": "string", "description": "Generator type ('linearDistribution', 'gridDistribution', 'circleDistribution')." }
+    ],
+    "returns": "void",
+    "description": "Switches the active generator type on a layer attribute such as a duplicator's distribution.",
+    "example": "api.setGenerator(dupId, 'generator', 'linearDistribution');",
+    "deprecated": false
+  },
+  {
+    "name": "api.connect",
+    "signature": "api.connect(srcLayerId: string, srcAttr: string, dstLayerId: string, dstAttr: string, force?: boolean): void",
+    "context": ["script", "plugin"],
+    "params": [
+      { "name": "srcLayerId", "type": "string", "description": "Source node ID." },
+      { "name": "srcAttr", "type": "string", "description": "Source output attribute (commonly 'id' or 'value')." },
+      { "name": "dstLayerId", "type": "string", "description": "Destination layer ID." },
+      { "name": "dstAttr", "type": "string", "description": "Destination input attribute (e.g. 'deformers', 'filters', 'stroke', 'shapes', 'material.shader')." },
+      { "name": "force", "type": "boolean", "description": "Optional flag to overwrite an existing single connection." }
+    ],
+    "returns": "void",
+    "description": "Wires an output attribute of one node to an input attribute of another node.",
+    "example": "api.connect(staggerId, 'id', dupId, 'shapeTimeOffset');",
+    "deprecated": false
+  },
+  {
+    "name": "api.keyframe",
+    "signature": "api.keyframe(layerId: string, frame: number, attributes: Record<string, unknown>): void",
+    "context": ["script", "plugin"],
+    "params": [
+      { "name": "layerId", "type": "string", "description": "Target layer ID." },
+      { "name": "frame", "type": "number", "description": "Timeline frame number." },
+      { "name": "attributes", "type": "Record<string, unknown>", "description": "Single-attribute or scalar dictionary to keyframe at frame." }
+    ],
+    "returns": "void",
+    "description": "Creates or updates a keyframe at the specified frame.",
+    "example": "api.keyframe(cardId, 0, { 'scale.x': 0 }); api.keyframe(cardId, 20, { 'scale.x': 1 });",
+    "deprecated": false
+  },
+  {
+    "name": "api.magicEasing",
+    "signature": "api.magicEasing(layerId: string, attrPath: string, frame: number, easingName: string, expression?: string): void",
+    "context": ["script", "plugin"],
+    "params": [
+      { "name": "layerId", "type": "string", "description": "Target layer ID." },
+      { "name": "attrPath", "type": "string", "description": "Animated attribute path." },
+      { "name": "frame", "type": "number", "description": "Outgoing keyframe frame number." },
+      { "name": "easingName", "type": "string", "description": "Canonical Magic Easing name (e.g. 'SpringOut', 'OvershootOut', 'SlowOut', 'SlowInSlowOut')." },
+      { "name": "expression", "type": "string", "description": "Optional curve expression, only valid when easingName is 'Custom' or 'None'." }
+    ],
+    "returns": "void",
+    "description": "Assigns a Cavalry Magic Easing preset to the outgoing segment of a keyframe.",
+    "example": "api.magicEasing(cardId, 'scale.x', 0, 'SpringOut');",
+    "deprecated": false
+  },
+  {
+    "name": "api.modifyKeyframe",
+    "signature": "api.modifyKeyframe(layerId: string, spec: Record<string, { frame: number; newFrame?: number; newValue?: unknown; type?: number }>): void",
+    "context": ["script", "plugin"],
+    "params": [
+      { "name": "layerId", "type": "string", "description": "Target layer ID." },
+      { "name": "spec", "type": "object", "description": "Map of attrPath to modification descriptor { frame, newFrame?, newValue?, type? }." }
+    ],
+    "returns": "void",
+    "description": "Retimes or updates an existing keyframe's value or interpolation mode in place without disturbing neighbour tangents.",
+    "example": "api.modifyKeyframe(id, { 'position.x': { frame: 10, newFrame: 12 } });",
+    "deprecated": false
+  },
+  {
+    "name": "api.modifyKeyframeTangent",
+    "signature": "api.modifyKeyframeTangent(layerId: string, spec: Record<string, { frame: number; inHandle: boolean; outHandle: boolean; angle?: number; weight?: number; angleLocked?: boolean; weightLocked?: boolean }>): void",
+    "context": ["script", "plugin"],
+    "params": [
+      { "name": "layerId", "type": "string", "description": "Target layer ID." },
+      { "name": "spec", "type": "object", "description": "Map of attrPath to tangent handle descriptor." }
+    ],
+    "returns": "void",
+    "description": "Adjusts explicit cubic Bézier tangent angle and weight handles on an existing keyframe.",
+    "example": "api.modifyKeyframeTangent(id, { 'position.y': { frame: 0, inHandle: false, outHandle: true, angle: 0, weight: 8 } });",
+    "deprecated": false
+  },
+  {
+    "name": "api.getBoundingBox",
+    "signature": "api.getBoundingBox(layerId: string, worldSpace?: boolean): { x: number; y: number; width: number; height: number; centre: { x: number; y: number } }",
+    "context": ["script", "plugin", "utility"],
+    "params": [
+      { "name": "layerId", "type": "string", "description": "Layer ID to measure." },
+      { "name": "worldSpace", "type": "boolean", "description": "True for composition world-space AABB, false for local layer bounds." }
+    ],
+    "returns": "{ x: number, y: number, width: number, height: number, centre: { x: number, y: number } }",
+    "description": "Measures the axis-aligned bounding box of a layer at the current playhead frame. Essential for centering textShape layers and auto-sizing pill backgrounds.",
+    "example": "const bb = api.getBoundingBox(textId, false);",
+    "deprecated": false
+  },
+  {
+    "name": "api.getNiceName",
+    "signature": "api.getNiceName(layerId: string): string",
+    "context": ["script", "plugin", "render"],
+    "params": [
+      { "name": "layerId", "type": "string", "description": "Target layer ID." }
+    ],
+    "returns": "string",
+    "description": "Returns the user-visible display name of a layer. Always use api.getNiceName instead of the non-existent api.getName.",
+    "example": "const name = api.getNiceName('basicShape#1');",
+    "deprecated": false
+  },
+  {
+    "name": "api.getName",
+    "signature": "api.getName(layerId: string): never",
+    "context": ["script"],
+    "params": [
+      { "name": "layerId", "type": "string", "description": "Target layer ID." }
+    ],
+    "returns": "never (does not exist in Cavalry 2.7+/2.8+)",
+    "description": "DEPRECATED / NON-EXISTENT TRAP: api.getName does not exist in Cavalry 2.7+/2.8+. Use api.getNiceName(layerId) instead.",
+    "example": "const name = api.getNiceName(layerId);",
+    "deprecated": true
+  },
+  {
+    "name": "api.addDynamic",
+    "signature": "api.addDynamic(layerId: string, attrType: string, attrName: string): string",
+    "context": ["script", "plugin"],
+    "params": [
+      { "name": "layerId", "type": "string", "description": "Host layer ID (such as a master Controller Null)." },
+      { "name": "attrType", "type": "string", "description": "Dynamic attribute type: 'double', 'int', 'bool', 'color', 'string', 'int2', 'double2'." },
+      { "name": "attrName", "type": "string", "description": "Name of the custom dynamic attribute." }
+    ],
+    "returns": "string (dynamic attribute path, e.g. 'array.customAttr')",
+    "description": "Adds a custom user-facing dynamic slider, colour swatch, or toggle to a control null layer (Controllerizer pattern).",
+    "example": "api.addDynamic(ctrlNull, 'double', 'cardSpread');",
+    "deprecated": false
+  },
+  {
+    "name": "api.parent",
+    "signature": "api.parent(childLayerId: string, parentLayerId: string): void",
+    "context": ["script", "plugin"],
+    "params": [
+      { "name": "childLayerId", "type": "string", "description": "Child layer ID." },
+      { "name": "parentLayerId", "type": "string", "description": "Parent layer ID." }
+    ],
+    "returns": "void",
+    "description": "Parents childLayerId under parentLayerId in the scene hierarchy.",
+    "example": "api.parent(iconId, cardNullId);",
+    "deprecated": false
+  },
+  {
+    "name": "api.renderPNGFrame",
+    "signature": "api.renderPNGFrame(baseFilePath: string, scalePercent?: number): void",
+    "context": ["script", "render"],
+    "params": [
+      { "name": "baseFilePath", "type": "string", "description": "Output file path without .png extension." },
+      { "name": "scalePercent", "type": "number", "description": "Render resolution percentage (default 100)." }
+    ],
+    "returns": "void",
+    "description": "Synchronously renders the active composition at the current playhead frame to a PNG file on disk.",
+    "example": "api.setFrame(24); api.renderPNGFrame('/tmp/frame_000024', 100);",
+    "deprecated": false
+  },
+  {
+    "name": "api.startUndoGroup",
+    "signature": "api.startUndoGroup(label: string): void",
+    "context": ["script", "plugin"],
+    "params": [
+      { "name": "label", "type": "string", "description": "Name shown in Cavalry's Edit > Undo menu." }
+    ],
+    "returns": "void",
+    "description": "Opens an atomic Undo transaction. Always pair with api.endUndoGroup() inside a try/finally block.",
+    "example": "api.startUndoGroup('Build Rig'); try { /* ops */ } finally { api.endUndoGroup(); }",
+    "deprecated": false
+  },
+  {
+    "name": "cavalry.Path",
+    "signature": "new cavalry.Path()",
+    "context": ["script", "shape", "deformer", "emitter"],
+    "params": [],
+    "returns": "cavalry.Path",
+    "description": "Constructs and manipulates 2D vector bezier paths with moveTo(x,y), lineTo(x,y), curveTo(cp1x,cp1y,cp2x,cp2y,x,y), quadTo(cpx,cpy,x,y), closePath(), and contours().",
+    "example": "const p = new cavalry.Path(); p.moveTo(-50, 0); p.lineTo(50, 0); p.closePath();",
+    "deprecated": false
+  },
+  {
+    "name": "ctx.index",
+    "signature": "ctx.index: number",
+    "context": ["shape", "deformer", "emitter", "modifier", "utility"],
+    "params": [],
+    "returns": "number",
+    "description": "Zero-based index of the current clone/point/sub-mesh being evaluated inside a JavaScript Modifier, Deformer, or Duplicator context.",
+    "example": "const phase = ctx.index / Math.max(1, ctx.count - 1);",
+    "deprecated": false
+  }
+]

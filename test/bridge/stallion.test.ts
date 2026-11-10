@@ -1,9 +1,23 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { runScriptWithResult, sendToCavalry, type StallionConfig } from "../../src/bridge/stallion.js";
+import {
+  CAVALRY_EXECUTION_CONTEXTS,
+  CONTEXT_GLOBALS_BY_CONTEXT,
+  EXPRESSION_PAYLOAD_TYPES,
+  captureJsLogDiagnostics,
+  executeExpressionPayload,
+  isExpressionPayloadType,
+  payloadTypeToExecutionContext,
+  runScriptWithResult,
+  sendToCavalry,
+  validateCavalryContextUsage,
+  validateSkslSource,
+  type StallionConfig,
+} from "../../src/bridge/stallion.js";
 import { parseOutcome } from "../../src/shared/lib.js";
 import { startMockStallion } from "../helpers/mockStallion.js";
 
@@ -186,5 +200,117 @@ test("config: per-process default result path and split timeouts (with legacy fa
   } finally {
     Object.assign(process.env, saved);
     delete process.env.CAVALRY_TIMEOUT_MS;
+  }
+});
+
+test("Phase 2: 8 Cavalry execution contexts and context-scoped global validation", () => {
+  assert.deepEqual([...CAVALRY_EXECUTION_CONTEXTS], [
+    "script",
+    "plugin",
+    "render",
+    "shape",
+    "utility",
+    "deformer",
+    "emitter",
+    "modifier",
+  ]);
+  assert.ok(CONTEXT_GLOBALS_BY_CONTEXT.deformer.includes("def"));
+  assert.ok(CONTEXT_GLOBALS_BY_CONTEXT.render.includes("render"));
+  assert.ok(CONTEXT_GLOBALS_BY_CONTEXT.plugin.includes("install"));
+
+  const okDeformer = validateCavalryContextUsage("var pts = def.getPoints(); return pts;", "javaScriptDeformer");
+  assert.equal(okDeformer.valid, true);
+  assert.equal(okDeformer.context, "deformer");
+
+  const badUtility = validateCavalryContextUsage("api.create('basicShape'); ui.show();", "javaScriptUtility");
+  assert.equal(badUtility.valid, false);
+  assert.deepEqual(badUtility.forbiddenUsages, ["api.create", "ui.show"]);
+});
+
+test("Phase 2: all 9 expression/shader payload types return seq-matched receipts and capture js_log.txt diagnostics", async () => {
+  assert.equal(EXPRESSION_PAYLOAD_TYPES.length, 9);
+  for (const pt of EXPRESSION_PAYLOAD_TYPES) {
+    assert.equal(isExpressionPayloadType(pt), true);
+  }
+
+  const sksl = validateSkslSource("uniform float uTime;\nhalf4 main(float2 fragCoord) { return half4(uTime); }");
+  assert.equal(sksl.valid, true);
+  assert.deepEqual(sksl.uniforms, [{ type: "float", name: "uTime" }]);
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cav-jslog-"));
+  const jsLogPath = path.join(tmpDir, "js_log.txt");
+  fs.writeFileSync(jsLogPath, "[WARN] Skipped layer 'Title' because it is not of type 'javaScriptShape'\n[ERROR] ReferenceError: bogus is not defined\n");
+
+  const parsedLog = captureJsLogDiagnostics(jsLogPath);
+  assert.equal(parsedLog.length, 2);
+  assert.equal(parsedLog[0].level, "warn");
+  assert.equal(parsedLog[1].level, "error");
+
+  let lastResult: Record<string, unknown> = { kind: "status" };
+  const server = http.createServer((req, res) => {
+    if (req.method === "GET" && req.url === "/get") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(lastResult));
+      return;
+    }
+    if (req.method === "POST" && req.url === "/post") {
+      let body = "";
+      req.on("data", (chunk) => { body += String(chunk); });
+      req.on("end", () => {
+        const parsed = JSON.parse(body) as { type: string; seq: string };
+        lastResult = {
+          type: "__stallion_result__",
+          kind: "result",
+          seq: parsed.seq,
+          ok: true,
+          applied: [`${parsed.type}#1`],
+          skipped: [],
+          receipt: {
+            sceneStateHash: "0123456789abcdef",
+            consoleDiagnostics: [],
+            jsLogDiagnostics: [],
+            beatBBoxes: {},
+            payloadType: parsed.type,
+            context: payloadTypeToExecutionContext(parsed.type),
+            applied: [`${parsed.type}#1`],
+            skipped: [],
+            valid: true,
+          },
+        };
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+      });
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+
+  const port: number = await new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      resolve((server.address() as { port: number }).port);
+    });
+  });
+
+  try {
+    const cfg = configFor(port, tmpResultPath());
+    for (const payloadType of EXPRESSION_PAYLOAD_TYPES) {
+      const code = payloadType.startsWith("sksl")
+        ? "uniform float uTime;\nhalf4 main(float2 fragCoord) { return half4(1.0); }"
+        : payloadType.includes("Render")
+          ? "console.log(render.frame);"
+          : "return ctx.frame;";
+      const res = await executeExpressionPayload(payloadType, code, cfg, { jsLogPath });
+      assert.equal(res.ok, true);
+      assert.deepEqual(res.applied, [`${payloadType}#1`]);
+      assert.equal(res.receipt.payloadType, payloadType);
+      assert.equal(res.receipt.context, payloadTypeToExecutionContext(payloadType));
+      assert.equal(res.receipt.valid, true);
+      assert.equal(res.receipt.sceneStateHash, "0123456789abcdef");
+      assert.equal(res.receipt.jsLogDiagnostics.length, 2);
+    }
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });

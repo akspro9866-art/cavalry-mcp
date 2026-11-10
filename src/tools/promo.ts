@@ -13,6 +13,13 @@ import os from "node:os";
 import path from "node:path";
 import { executeMotionScript, type ScriptOutcome } from "../runtime/execute.js";
 import type { StallionConfig } from "../bridge/stallion.js";
+import {
+  compileBeatSfxTrack,
+  parseBeatPayload,
+  type SfxCompileResult,
+  type SfxCueSpec,
+  type TimelineJsonContract,
+} from "./beats.js";
 
 export interface PromoSceneInput {
   comp: string;
@@ -34,6 +41,8 @@ export interface PromoPlanInput {
   width?: number;
   height?: number;
   audio?: string | null;
+  sfxCueSheet?: SfxCueSpec[] | TimelineJsonContract | null;
+  beatFrames?: number[] | null;
   workDir?: string;
   scale?: number;
   crf?: number;
@@ -60,6 +69,8 @@ export interface NormalizedPromo {
   width: number;
   height: number;
   audio: string | null;
+  sfxCueSheet?: SfxCueSpec[] | TimelineJsonContract | null;
+  beatFrames?: number[] | null;
   workDir: string;
   scale: number;
   crf: number;
@@ -99,6 +110,7 @@ export interface PromoResult {
   rendered: Array<{ scene: number; frame: number; file: string }>;
   commands: PromoCommand[];
   log: string[];
+  sfxResult?: SfxCompileResult;
 }
 
 export interface PromoOptions {
@@ -158,6 +170,8 @@ export function normalizePromoPlan(input: unknown, workDir?: string): Normalized
     width: Math.round(positive(raw.width, 1920)),
     height: Math.round(positive(raw.height, 1080)),
     audio: raw.audio ? path.resolve(raw.audio) : null,
+    ...(raw.sfxCueSheet ? { sfxCueSheet: raw.sfxCueSheet } : {}),
+    ...(Array.isArray(raw.beatFrames) ? { beatFrames: raw.beatFrames } : {}),
     workDir: resolvedWork,
     scale: positive(raw.scale, 100),
     crf: positive(raw.crf, 18),
@@ -394,6 +408,24 @@ export async function runPromo(input: unknown, opts: PromoOptions = {}): Promise
     if (!manifest || !Array.isArray(manifest.scenes)) throw new Error("Promo render returned no scene manifest");
   }
 
+  let sfxResult: SfxCompileResult | undefined;
+  if (!plan.audio && (plan.sfxCueSheet || (plan.beatFrames && plan.beatFrames.length > 0))) {
+    const sfxWavPath = path.join(plan.workDir, "promo_sfx.wav");
+    if (plan.sfxCueSheet && !Array.isArray(plan.sfxCueSheet) && plan.sfxCueSheet.schema === "claude-motion/timeline@1") {
+      sfxResult = await compileBeatSfxTrack(plan.sfxCueSheet, sfxWavPath);
+    } else {
+      const cues = Array.isArray(plan.sfxCueSheet) ? plan.sfxCueSheet : undefined;
+      const frames =
+        plan.beatFrames && plan.beatFrames.length > 0
+          ? plan.beatFrames
+          : cues?.map(c => c.frame) ?? [0, 15, 30];
+      const analysis = parseBeatPayload({ fps: plan.fps, frames }, plan.fps);
+      sfxResult = await compileBeatSfxTrack(analysis, sfxWavPath, { cues });
+    }
+    plan.audio = sfxResult.outWavPath;
+    log.push(`compiled -14 LUFS SFX track: ${sfxResult.outWavPath} (${sfxResult.measuredLufs} LUFS)`);
+  }
+
   const { commands } = buildPromoCommands(plan, manifest, opts.ffmpegPath);
   if (!dryRun && manifest.rendered > 0) {
     await writeImageLists(manifest, plan);
@@ -427,5 +459,6 @@ export async function runPromo(input: unknown, opts: PromoOptions = {}): Promise
     rendered: manifest.files,
     commands,
     log,
+    ...(sfxResult ? { sfxResult } : {}),
   };
 }

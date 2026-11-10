@@ -44,6 +44,7 @@ export const PRESET_MANIFEST_CATEGORY_CODES: Record<PresetCategoryId, string> = 
   voice_audio_video: "av",
   onboarding_plg: "pl",
   social_proof_cta: "ct",
+  procedural_saas: "ps",
   cloned_styles: "cs",
 };
 

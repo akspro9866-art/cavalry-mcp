@@ -15,8 +15,18 @@ import { CAT11_CLOUD_DEVOPS } from "./packs/cat11_cloud_devops.js";
 import { CAT12_VOICE_AUDIO_VIDEO } from "./packs/cat12_voice_audio_video.js";
 import { CAT13_ONBOARDING_PLG } from "./packs/cat13_onboarding_plg.js";
 import { CAT14_SOCIAL_PROOF_CTA } from "./packs/cat14_social_proof_cta.js";
+import { CAT15_PROCEDURAL_SAAS } from "./packs/cat15_procedural_saas.js";
+export {
+  remap,
+  layerRect,
+  addLineBreaks,
+  evaluateSpring,
+  computeSpringSettlingTime,
+  generateSpringCurve,
+  type SpringPhysicsOptions,
+} from "../runtime/mg_helpers.js";
 
-/** Every preset definition, in library order (1-120). */
+/** Every preset definition, in library order (1-125). */
 export const PRESET_DEFS: PresetDef[] = [
   ...CAT01_TYPOGRAPHY,
   ...CAT02_UI_MOCKUPS,
@@ -32,6 +42,7 @@ export const PRESET_DEFS: PresetDef[] = [
   ...CAT12_VOICE_AUDIO_VIDEO,
   ...CAT13_ONBOARDING_PLG,
   ...CAT14_SOCIAL_PROOF_CTA,
+  ...CAT15_PROCEDURAL_SAAS,
 ];
 
 const BY_ID = new Map(PRESET_DEFS.map(def => [def.id, def]));

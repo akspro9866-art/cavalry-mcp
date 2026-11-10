@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { compositeGrid, sampleFrames, decodePng, encodePng, type RasterFrame } from "../../src/server/legacy/filmstrip.js";
+import {
+  compositeGrid,
+  sampleFrames,
+  decodePng,
+  encodePng,
+  evaluateFilmstripReviewLoop,
+  type RasterFrame,
+} from "../../src/server/legacy/filmstrip.js";
 
 function solidFrame(width: number, height: number, rgba: [number, number, number, number]): RasterFrame {
   const data = Buffer.alloc(width * height * 4);
@@ -59,4 +66,24 @@ test("decode/encode PNG round trip", () => {
   assert.equal(decoded.width, 3);
   assert.equal(decoded.height, 5);
   assert.deepEqual([...decoded.data], [...frame.data]);
+});
+
+test("evaluateFilmstripReviewLoop detects collisions, clipping, safe-margin and readability hold issues", () => {
+  const clean = evaluateFilmstripReviewLoop([
+    { layerId: "title#1", left: 200, top: 200, right: 800, bottom: 280, role: "text", inFrame: 0, outFrame: 60 },
+    { layerId: "sub#2", left: 200, top: 320, right: 700, bottom: 380, role: "text", inFrame: 10, outFrame: 70 },
+  ]);
+  assert.equal(clean.passed, true);
+  assert.equal(clean.score, 100);
+  assert.equal(clean.issues.length, 0);
+
+  const flawed = evaluateFilmstripReviewLoop([
+    { layerId: "clip#1", left: -20, top: 100, right: 400, bottom: 180, role: "card" },
+    { layerId: "textA#2", left: 200, top: 200, right: 600, bottom: 260, role: "text", inFrame: 0, outFrame: 20 },
+    { layerId: "textB#3", left: 250, top: 220, right: 650, bottom: 280, role: "text", inFrame: 10, outFrame: 80 },
+  ]);
+  assert.equal(flawed.passed, false);
+  assert.ok(flawed.issues.some((i) => i.type === "clipping"));
+  assert.ok(flawed.issues.some((i) => i.type === "collision"));
+  assert.ok(flawed.issues.some((i) => i.type === "readability_hold"));
 });

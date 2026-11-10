@@ -11,6 +11,11 @@ import {
   detectBeatsFromPcm,
   readBeatFile,
   analyzeAudioFile,
+  buildTimelineJsonContract,
+  compileBeatSfxTrack,
+  exportPremiereMarkersJson,
+  exportResolveTimelineMarkers,
+  importNleMarkers,
 } from "../../src/tools/beats.js";
 import { removeTreeSync } from "../../src/shared/fs-safe.js";
 
@@ -139,6 +144,37 @@ test("beats: ffmpeg decodes a WAV click track", { skip: hasFfmpeg ? false : "ffm
     assert.ok(analysis.frames.some((frame) => Math.abs(frame - 15) <= 3), `expected a beat near frame 15: ${analysis.frames.join(",")}`);
     assert.equal(analysis.bpm, 120);
     assert.ok((analysis.durationSeconds ?? 0) >= 3.9);
+  } finally {
+    removeTreeSync(dir);
+  }
+});
+
+test("beats: timeline JSON contract, -14 LUFS SFX synthesis, and NLE marker exchange", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cav-beats-sfx-"));
+  try {
+    const analysis = parseBeatPayload({ fps: 60, frames: [0, 30, 60, 90] }, 60);
+    const contract = buildTimelineJsonContract(analysis);
+    assert.equal(contract.schema, "claude-motion/timeline@1");
+    assert.equal(contract.fps, 60);
+    assert.equal(contract.bpm, 120);
+    assert.equal(contract.cues.length, 4);
+    assert.equal(contract.cues[0].kind, "subDrop");
+
+    const wavOut = path.join(dir, "sfx.wav");
+    const sfx = await compileBeatSfxTrack(contract, wavOut, { targetLufs: -14 });
+    assert.equal(sfx.targetLufs, -14);
+    assert.ok(Math.abs(sfx.measuredLufs - -14) < 0.5, `measured LUFS ${sfx.measuredLufs} should be near -14`);
+    assert.ok(fs.existsSync(wavOut));
+    assert.ok(fs.statSync(wavOut).size > 44);
+
+    const premiereJson = exportPremiereMarkersJson(analysis);
+    const importedPremiere = importNleMarkers(premiereJson, 60);
+    assert.deepEqual(importedPremiere.frames, [0, 30, 60, 90]);
+
+    const resolveMarkers = exportResolveTimelineMarkers(analysis);
+    assert.ok(resolveMarkers[0]);
+    const importedResolve = importNleMarkers(resolveMarkers, 60);
+    assert.deepEqual(importedResolve.frames, [0, 30, 60, 90]);
   } finally {
     removeTreeSync(dir);
   }
