@@ -41,6 +41,15 @@
     "node": ">=18.17"
   },
   "license": "MIT",
+  "author": "cavalry-mcp contributors",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/akspro9866-art/cavalry-mcp.git"
+  },
+  "homepage": "https://github.com/akspro9866-art/cavalry-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/akspro9866-art/cavalry-mcp/issues"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
     "pngjs": "^7.0.0",
