@@ -19,7 +19,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { PRESET_CATEGORIES } from "../presets/types.js";
-import { compileMgDsl, type MgDslManifest } from "../runtime/mg_manifest.js";
+import { type MgDslManifest } from "../runtime/mg_manifest.js";
 import { runBatchStep, runReadback, type BatchStepResponse } from "../bridge/stallion.js";
 import { resolvePreset, searchPresets, serializeCompactTsv, type CompactTsvLayer } from "../lib/index.js";
 import { registerClonedTools } from "./cloned-tools.js";
