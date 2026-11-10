@@ -26,9 +26,22 @@ export * as cavalrySnippets from "./presets/cavalry_snippets.js";
 export * from "./presets/cavalry_snippets.js";
 export * from "./presets/types.js";
 export * from "./validator/mg_validator.js";
+export * from "./themes/astryx-themes.js";
+export * from "./validation/validate-mg-purity.js";
 export { searchPresets, resolvePreset } from "./lib/index.js";
 export type { PresetSearchHit, PresetSearchResult, PresetResolveOk, PresetResolveError } from "./lib/index.js";
-export { motionSignatureFor, requiredParamsFor, defaultDurationFor } from "./presets/manifest.js";
+export {
+  motionSignatureFor,
+  requiredParamsFor,
+  defaultDurationFor,
+  summaryEightWordsFor,
+  formatCompactPresetLine,
+  buildCompactPresetDoc,
+  buildCompactPresetCatalogLines,
+  lookupPresetCompact,
+  PRESET_CATALOG_AGENT_RULE,
+} from "./presets/manifest.js";
+export type { CompactPresetDoc } from "./presets/manifest.js";
 
 export interface PresetPack {
   id: string;

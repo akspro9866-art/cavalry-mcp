@@ -237,4 +237,7 @@ export const MG_RASTER_SOURCE = String.raw`  fromRaster(x, y, compWidth, compHei
     return api.getSelection()[0];
   }
 };
+try {
+  Object.assign(_mg.theme, _mg.ASTRYX_THEMES.neutral, { themeName: "neutral" });
+} catch (e) {}
 `;

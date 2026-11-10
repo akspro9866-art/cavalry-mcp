@@ -17,8 +17,9 @@
   ],
   "scripts": {
     "prepare": "npm run build",
-    "build": "tsc && node scripts/build-preset-manifest.mjs",
+    "build": "tsc && node scripts/build-preset-manifest.mjs && node scripts/build-preset-docs.mjs",
     "build:manifest": "node scripts/build-preset-manifest.mjs",
+    "build:docs": "node scripts/build-preset-docs.mjs",
     "start": "node dist/index.js",
     "dev": "tsc --watch",
     "pretest": "npm run build",

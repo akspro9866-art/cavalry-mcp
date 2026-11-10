@@ -21,7 +21,7 @@ import { z } from "zod";
 import { PRESET_CATEGORIES } from "../presets/types.js";
 import { type MgDslManifest } from "../runtime/mg_manifest.js";
 import { runBatchStep, runReadback, type BatchStepResponse } from "../bridge/stallion.js";
-import { resolvePreset, searchPresets, serializeCompactTsv, type CompactTsvLayer } from "../lib/index.js";
+import { resolvePreset, searchPresets, lookupPresetCompact, serializeCompactTsv, type CompactTsvLayer } from "../lib/index.js";
 import { registerClonedTools } from "./cloned-tools.js";
 
 function textResult(text: string, isError = false) {
@@ -157,13 +157,29 @@ export function registerCompactTools(server: McpServer): void {
   // -------------------------------------------------------------------------
   server.tool(
     "cavalry_search_presets",
-    "Search the 120-preset procedural library by keyword, motion tag (pop/slide/stagger/count/wave/…) or easing family (spring/overshoot/linear) and return matching ids, parameter schemas and rig metadata. Always search before invoking a preset in cavalry_apply_dsl — the full catalog is never listed here.",
+    "Search the 120-preset procedural library by keyword, motion tag (pop/slide/stagger/count/wave/…) or easing family (spring/overshoot/linear), or resolve an exact presetId from the compact index without loading all 120 full schemas.",
     {
       query: z.string().optional().describe('Space-separated keywords; every word must match (AND). Examples: "counter", "card spring", "progress bar".'),
       category: z.string().optional().describe("Category filter: id (typography), index (1-14) or label fragment (e.g. \"fintech\")."),
+      presetId: z.string().optional().describe("Exact preset id or alias to resolve lazily from the compact index without loading all 120 schemas."),
     },
     async args => {
       try {
+        if (args.presetId && args.presetId.trim().length > 0) {
+          const compact = lookupPresetCompact(args.presetId);
+          if (!compact.ok) {
+            return textResult(
+              `No preset matches presetId ${JSON.stringify(args.presetId)}. ${compact.total} presets exist across ${PRESET_CATEGORIES.length} packs.`,
+              true,
+            );
+          }
+          return jsonResult({
+            ok: true,
+            mode: "compact_lookup",
+            presetId: compact.preset.id,
+            preset: compact.preset,
+          });
+        }
         const result = searchPresets(args.query ?? "", args.category);
         if (!result.matched) {
           return textResult(

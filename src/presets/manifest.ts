@@ -21,7 +21,7 @@
  */
 
 import type { PresetCategoryId, PresetDef } from "./types.js";
-import { PRESET_DEFS } from "./cavalry_snippets.js";
+import { PRESET_DEFS, resolvePresetName } from "./cavalry_snippets.js";
 import { derivePresetRig } from "../runtime/rig_terms.js";
 
 export const PRESET_MANIFEST_VERSION = 1;
@@ -122,6 +122,60 @@ export function requiredParamsFor(def: PresetDef): string[] {
 export function defaultDurationFor(def: PresetDef): number {
   const duration = Number(def.params.duration?.default);
   return Number.isFinite(duration) && duration > 0 ? Math.round(duration) : 60;
+}
+
+/** Deterministic <=8-word summary for AGENTS.md and lazy .doc.mjs files. */
+export function summaryEightWordsFor(def: PresetDef): string {
+  const raw = String(def.description || def.title || def.id)
+    .replace(/\s+/g, " ")
+    .replace(/[|]+/g, "/")
+    .trim();
+  const firstClause = raw.split(/[.!;—–]/)[0]?.trim() || raw;
+  const words = firstClause.split(/\s+/).filter(Boolean).slice(0, 8);
+  return words.join(" ").replace(/[,:;]+$/, "");
+}
+
+/** Format a single 1-line AGENTS.md catalog row: `id | category | requiredParams | 8-word summary`. */
+export function formatCompactPresetLine(def: PresetDef): string {
+  const req = requiredParamsFor(def);
+  const reqCell = req.length > 0 ? req.join(",") : "-";
+  return `${def.id} | ${def.category} | ${reqCell} | ${summaryEightWordsFor(def)}`;
+}
+
+export interface CompactPresetDoc {
+  id: string;
+  category: PresetCategoryId;
+  motionSignature: string;
+  requiredParams: string[];
+  defaultDuration: number;
+  summary: string;
+  catalogLine: string;
+  usage: string;
+  tokenEstimate: number;
+}
+
+/** Build a compact doc object (capped at <=110 tokens) for a single preset. */
+export function buildCompactPresetDoc(def: PresetDef): CompactPresetDoc {
+  const req = requiredParamsFor(def);
+  const summary = summaryEightWordsFor(def);
+  const catalogLine = formatCompactPresetLine(def);
+  const sampleParams = Object.fromEntries(req.slice(0, 3).map((k) => [k, def.params[k]?.default ?? "..."]));
+  const usage = `presets: [{ id: ${JSON.stringify(def.id)}, params: ${JSON.stringify(sampleParams)} }]`;
+  const docBase = {
+    id: def.id,
+    category: def.category,
+    motionSignature: motionSignatureFor(def),
+    requiredParams: req,
+    defaultDuration: defaultDurationFor(def),
+    summary,
+    catalogLine,
+    usage,
+  };
+  const tokenEstimate = estimatePresetManifestTokens(JSON.stringify(docBase));
+  return {
+    ...docBase,
+    tokenEstimate,
+  };
 }
 
 export interface PresetManifestEntry {
@@ -236,3 +290,40 @@ export function parsePresetManifest(json: string): ParsedPresetManifest {
 export function estimatePresetManifestTokens(json: string): number {
   return Math.ceil(json.length / 4);
 }
+
+/** Explicit agent rule required in AGENTS.md and compact index discovery. */
+export const PRESET_CATALOG_AGENT_RULE =
+  "Browse the preset catalog first before writing _mg code. Never use raw api.create/api.set when an _mg preset exists.";
+
+/** Build all 120 1-line catalog entries (`id | category | requiredParams | 8-word summary`). */
+export function buildCompactPresetCatalogLines(): string[] {
+  return PRESET_DEFS.map((def) => formatCompactPresetLine(def));
+}
+
+const COMPACT_DOC_BY_ID = new Map<string, CompactPresetDoc>();
+
+/**
+ * Resolve a single preset (`{ presetId }`) lazily from the compact index
+ * without loading all 120 full schemas into the prompt context.
+ */
+export function lookupPresetCompact(
+  presetId: string,
+): ({ ok: true; preset: CompactPresetDoc } | { ok: false; error: string; total: number }) {
+  const resolved = resolvePresetName(String(presetId ?? "").trim());
+  if (!COMPACT_DOC_BY_ID.has(resolved)) {
+    const def = PRESET_DEFS.find((candidate) => candidate.id === resolved);
+    if (!def) {
+      return {
+        ok: false,
+        error: `Unknown presetId: ${presetId}`,
+        total: PRESET_DEFS.length,
+      };
+    }
+    COMPACT_DOC_BY_ID.set(resolved, buildCompactPresetDoc(def));
+  }
+  return {
+    ok: true,
+    preset: COMPACT_DOC_BY_ID.get(resolved)!,
+  };
+}
+

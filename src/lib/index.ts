@@ -26,16 +26,71 @@ import {
 	resolvePresetName,
 } from "../presets/cavalry_snippets.js";
 import { compilePreset, PRESET_DEFS } from "../presets/cavalry_snippets.js";
-import { motionSignatureFor } from "../presets/manifest.js";
+import {
+	buildCompactPresetCatalogLines,
+	buildCompactPresetDoc,
+	formatCompactPresetLine,
+	lookupPresetCompact,
+	motionSignatureFor,
+	PRESET_CATALOG_AGENT_RULE,
+	summaryEightWordsFor,
+	type CompactPresetDoc,
+} from "../presets/manifest.js";
 import { PRESET_CATEGORIES } from "../presets/types.js";
 import { derivePresetRig } from "../runtime/rig_terms.js";
+import {
+	ASTRYX_THEMES,
+	ASTRYX_THEME_NAMES,
+	DEFAULT_ASTRYX_THEME,
+	resolveAstryxTheme,
+	type AstryxThemeName,
+	type AstryxThemeTokens,
+} from "../themes/astryx-themes.js";
+import {
+	gradeFromScore,
+	selfCorrectMgPurity,
+	validateMgPurity,
+	type PurityBreakdown,
+	type PurityGrade,
+	type PurityValidationResult,
+	type PurityViolation,
+	type SelfCorrectPurityOptions,
+	type SelfCorrectPurityResult,
+} from "../validation/validate-mg-purity.js";
 
 export {
 	compileMgDsl,
 	MG_MANIFEST_RUNTIME,
 	MG_MANIFEST_VERSION,
+	ASTRYX_THEMES,
+	ASTRYX_THEME_NAMES,
+	DEFAULT_ASTRYX_THEME,
+	resolveAstryxTheme,
+	validateMgPurity,
+	selfCorrectMgPurity,
+	gradeFromScore,
+	lookupPresetCompact,
+	buildCompactPresetDoc,
+	buildCompactPresetCatalogLines,
+	formatCompactPresetLine,
+	summaryEightWordsFor,
+	PRESET_CATALOG_AGENT_RULE,
 };
-export type { MgDslEasingSpec, MgDslLayerSpec, MgDslManifest, MgDslOpSpec };
+export type {
+	MgDslEasingSpec,
+	MgDslLayerSpec,
+	MgDslManifest,
+	MgDslOpSpec,
+	AstryxThemeName,
+	AstryxThemeTokens,
+	PurityBreakdown,
+	PurityGrade,
+	PurityValidationResult,
+	PurityViolation,
+	SelfCorrectPurityOptions,
+	SelfCorrectPurityResult,
+	CompactPresetDoc,
+};
 export { PRESET_CATEGORIES, PRESET_DEFS, compilePreset, listPresets, motionSignatureFor, resolvePresetName };
 
 /** One search hit: bounded metadata, never the preset code. */
