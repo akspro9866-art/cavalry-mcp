@@ -23,7 +23,7 @@
     "dev": "tsc --watch",
     "pretest": "npm run build",
     "test": "node test/run-tests.mjs",
-    "test:ci": "npm run lint && npm test",
+    "test:ci": "npm run lint && node .github/scripts/skill-parity.mjs && npm test",
     "lint": "eslint .",
     "test:live": "npm run build && node test/run-tests.mjs --live",
     "test:watch": "node test/run-tests.mjs --watch"

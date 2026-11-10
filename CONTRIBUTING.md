@@ -49,3 +49,7 @@ for the bridge trust model before touching execution paths.
   them on the Ubuntu/Windows × Node 20/22/24 matrix.
 - If you change tool schemas or the `_mg` DSL, say which inputs move and
   update the matching README section without renaming existing anchors.
+- Shared stack skills are canonical here, under `.qoder/skills/`. Sibling repos
+  (stallion, refclone) keep their own copies for local agents and compare them
+  against this checkout byte-for-byte; edit the canonical copy here first and
+  synchronise the copies rather than forking skill text.
