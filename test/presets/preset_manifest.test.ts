@@ -21,12 +21,12 @@ import {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const distFile = path.join(here, "..", "..", "dist", PRESET_MANIFEST_FILE);
 
-test("the preset manifest covers exactly the 145 library presets in 16 packs", () => {
+test("the preset manifest covers exactly the 146 library presets in 16 packs", () => {
   const entries = buildPresetManifestEntries();
-  assert.equal(entries.length, 145);
-  assert.equal(PRESET_DEFS.length, 145);
+  assert.equal(entries.length, 146);
+  assert.equal(PRESET_DEFS.length, 146);
   assert.deepEqual(entries.map((entry) => entry.id), [...PRESET_NAMES]);
-  assert.equal(new Set(entries.map((entry) => entry.id)).size, 145);
+  assert.equal(new Set(entries.map((entry) => entry.id)).size, 146);
 
   const packs = new Set(entries.map((entry) => entry.category));
   assert.equal(packs.size, 16);
@@ -79,7 +79,7 @@ test("the serialized manifest is deterministic, parseable and under 1500 tokens"
   const parsed = parsePresetManifest(first);
   assert.equal(parsed.manifest.format, PRESET_MANIFEST_FORMAT);
   assert.equal(parsed.manifest.unit, "frames");
-  assert.equal(parsed.entries.length, 145);
+  assert.equal(parsed.entries.length, 146);
   assert.deepEqual(parsed.entries, buildPresetManifestEntries());
   // the dictionary is sorted and has no duplicates
   const signatures = parsed.manifest.signatures;

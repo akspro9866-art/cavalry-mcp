@@ -82,14 +82,14 @@ function typedOverrides(def: (typeof PRESET_DEFS)[number]): Record<string, unkno
   return out;
 }
 
-test("registry: 145 unique presets across 16 static categories (+1 runtime)", () => {
-  assert.equal(PRESET_DEFS.length, 145);
-  assert.equal(PRESET_NAMES.length, 145);
+test("registry: 146 unique presets across 16 static categories (+1 runtime)", () => {
+  assert.equal(PRESET_DEFS.length, 146);
+  assert.equal(PRESET_NAMES.length, 146);
   assert.equal(PRESET_CATEGORIES.length, CATEGORY_TOTAL);
   assert.equal(PRESET_CATEGORIES.filter(cat => cat.presets !== "dynamic").length, 16);
   assert.equal(PRESET_CATEGORIES.filter(cat => cat.presets === "dynamic").map(cat => cat.id).join(","), "cloned_styles");
   const ids = PRESET_DEFS.map((def) => def.id);
-  assert.equal(new Set(ids).size, 145);
+  assert.equal(new Set(ids).size, 146);
   assert.deepEqual([...PRESET_NAMES], ids);
   for (const def of PRESET_DEFS) {
     assert.ok(PRESET_CATEGORIES.some((cat) => cat.id === def.category), `${def.id} has an unknown category`);
@@ -112,12 +112,12 @@ test("registry: category distribution matches every declared range", () => {
 });
 
 test("listPresets: filters by id, category id, category index and label", () => {
-  assert.equal(listPresets().length, 145);
+  assert.equal(listPresets().length, 146);
   assert.equal(listPresets("fintech_billing").length, 10);
   assert.equal(listPresets("9").length, 10);
   assert.equal(listPresets("social_proof_cta").length, 10);
   assert.equal(listPresets("procedural_saas").length, 5);
-  assert.equal(listPresets("card_worlds").length, 20);
+  assert.equal(listPresets("card_worlds").length, 21);
   assert.equal(listPresets("coverflow_3d").length, 1);
   assert.equal(listPresets("data_globe").length, 1);
   assert.equal(listPresets("trust_badges_row").length, 1);

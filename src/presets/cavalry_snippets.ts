@@ -27,7 +27,7 @@ export {
   type SpringPhysicsOptions,
 } from "../runtime/mg_helpers.js";
 
-/** Every preset definition, in library order (1-145). */
+/** Every preset definition, in library order (1-146). */
 export const PRESET_DEFS: PresetDef[] = [
   ...CAT01_TYPOGRAPHY,
   ...CAT02_UI_MOCKUPS,

@@ -587,6 +587,50 @@ _rb.fade(line2, 16, 16, 0, 100, "SlowOut");
 `,
   },
   {
+    id: "page_turn_book",
+    title: "Page Turn Book",
+    category: "card_worlds",
+    description: "A two-page book spread whose right leaf turns 180 degrees around the spine and lands as the new left page.",
+    params: {
+      heading: { type: "string", default: "Turn to the next chapter", description: "Book headline" },
+      duration: { type: "int", default: 72, description: "Turn duration frames" },
+      accentColor: { type: "color", default: "#38BDF8", description: "Page-edge accent" },
+    },
+    code: `
+const dur = Math.max(36, __o.duration || 72);
+const title = _rb.textLeft(__o.heading, 25, -470, 250, { color: "#F8FAFC" });
+_rb.fade(title, 2, 14, 0, 100, "SlowOut");
+const spread = _rb.rect("Book Spread", 640, 400, { fill: "#0B0F14", radius: 12, x: 0, y: 0, stroke: true, strokeColor: "#1F2937", strokeWidth: 2 });
+_rb.pop(spread, 0, 18, { from: 0.9, ease: "SpringOut", fade: false });
+track("spread", spread);
+const left = _rb.rect("Left Page", 300, 380, { fill: "#F8FAFC", radius: 6, x: -160, y: 0 });
+const leftLine = _rb.textLeft("Chapter 03", 26, -280, 120, { color: "#0B0C10" });
+_rb.fade(left, 4, 12, 0, 100, "SlowOut");
+_rb.fade(leftLine, 6, 12, 0, 100, "SlowOut");
+const baseRight = _rb.rect("Right Page Back", 300, 380, { fill: "#E2E8F0", radius: 6, x: 160, y: 0 });
+_rb.fade(baseRight, 4, 12, 0, 100, "SlowOut");
+const baseRightLine = _rb.textLeft("Chapter 04", 26, 40, 120, { color: "#0B0C10" });
+_rb.fade(baseRightLine, 6, 12, 0, 100, "SlowOut");
+const spine = _rb.rect("Book Spine", 6, 380, { fill: __o.accentColor, radius: 3, x: 0, y: 0 });
+_rb.fade(spine, 4, 10, 0, 70, "SlowOut");
+const leafFront = _rb.rect("Turning Leaf Front", 300, 380, { fill: "#FFFFFF", radius: 6, x: 0, y: 0 });
+_rb.anchor(leafFront, -1, 0);
+_rb.pos(leafFront, 0, 0);
+const leafBack = _rb.rect("Turning Leaf Back", 300, 380, { fill: "#F1F5F9", radius: 6, x: 0, y: 0 });
+_rb.anchor(leafBack, 1, 0);
+_rb.pos(leafBack, 0, 0);
+const leafBackFace = _rb.textLeft("Chapter 06", 26, -280, 120, { color: "#0B0C10" });
+_rb.kf(leafFront, "scale.x", [[8, 1], [8 + dur * 0.5, 0.001]], "SlowInSlowOut");
+_rb.kf(leafFront, "opacity", [[8, 100], [8 + dur * 0.48, 100], [8 + dur * 0.5, 0]], "Linear");
+_rb.kf(leafBack, "scale.x", [[8 + dur * 0.5, 0.001], [8 + dur, 1]], "SlowInSlowOut");
+_rb.kf(leafBack, "opacity", [[8 + dur * 0.5, 0], [8 + dur * 0.52, 100]], "Linear");
+_rb.fade(leafBackFace, 8 + dur * 0.55, 12, 0, 100, "SlowOut");
+_rb.glow(leafFront, __o.accentColor, 16, 0.35);
+_rb.glow(leafBack, "#94A3B8", 12, 0.3);
+track("turningLeaf", leafFront);
+`,
+  },
+  {
     id: "accordion_fold_card",
     title: "Accordion Fold Card",
     category: "card_worlds",

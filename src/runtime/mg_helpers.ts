@@ -614,6 +614,33 @@ export function fittsCursorTrajectory(
   return out.sort((p, q) => p[0] - q[0]);
 }
 
+/**
+ * Sample a Fitts cursor trajectory at an arbitrary frame. Between waypoints the
+ * cursor follows an ease-out cubic (it decelerates into each target), and it
+ * holds the first/last waypoint beyond the ends. Deterministic lookup used by
+ * `scripts/wave2/plan-motion.mjs` beat sheets.
+ */
+export function fittsCursorAt(
+  frame: number,
+  trajectory: Array<[number, number, number]>,
+): { x: number; y: number } | null {
+  if (!Array.isArray(trajectory) || trajectory.length === 0) return null;
+  const points = [...trajectory].sort((a, b) => a[0] - b[0]);
+  if (frame <= points[0][0]) return { x: points[0][1], y: points[0][2] };
+  const last = points[points.length - 1];
+  if (frame >= last[0]) return { x: last[1], y: last[2] };
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i], b = points[i + 1];
+    if (frame < a[0] || frame > b[0]) continue;
+    const span = b[0] - a[0];
+    if (span <= 0) return { x: b[1], y: b[2] };
+    const t = (frame - a[0]) / span;
+    const eased = 1 - Math.pow(1 - t, 3);
+    return { x: a[1] + (b[1] - a[1]) * eased, y: a[2] + (b[2] - a[2]) * eased };
+  }
+  return { x: last[1], y: last[2] };
+}
+
 const settleOf = (sp: [number, number]): number => 16 / Math.max(1e-6, sp[0] * sp[1]);
 
 function springStep(tau: number, sp: [number, number]): number {

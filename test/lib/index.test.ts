@@ -12,8 +12,8 @@ import { MG_MANIFEST_RUNTIME } from "../../src/lib/index.js";
 
 test("searchPresets matches on motion signature, title and category, bounded", () => {
 	const all = searchPresets("", undefined);
-	assert.equal(all.total, 145);
-	assert.equal(all.matched, 145);
+	assert.equal(all.total, 146);
+	assert.equal(all.matched, 146);
 	assert.ok(all.presets.length <= 25, "results stay bounded");
 
 	const spring = searchPresets("spring", undefined);
@@ -50,7 +50,7 @@ test("resolvePreset compiles a preset body; unknown ids fail with a hint", () =>
 	assert.equal(bad.ok, false);
 	if (!bad.ok) {
 		assert.match(bad.error, /Unknown preset/);
-		assert.equal(bad.knownIds, 145);
+		assert.equal(bad.knownIds, 146);
 	}
 });
 

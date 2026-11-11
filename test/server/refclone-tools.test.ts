@@ -208,7 +208,7 @@ test("signatures contain only requested exact pack IDs, all metadata and no scri
     }
     const all = getPresetSignatures(PRESET_PACKS.map(pack => pack.id));
     assert.equal(all.packs.length, 16);
-    assert.equal(all.packs.flatMap(pack => pack.presets).length, 145);
+    assert.equal(all.packs.flatMap(pack => pack.presets).length, 146);
     for (const invalid of ["unknown", "1", "Typography", "cat01_typography"]) {
       const result = await session.call("refclone_get_preset_signatures", { packNames: ["typography", invalid] });
       assert.equal(result.isError, true);

@@ -60,8 +60,8 @@ test("built package core import cannot start MCP, HTTP, subprocesses or filesyst
   }
 });
 
-test("core exposes the actual namespace and exact 145/16 registry without synthetic packs", () => {
-  assert.equal(core.PRESET_DEFS.length, 145);
+test("core exposes the actual namespace and exact 146/16 registry without synthetic packs", () => {
+  assert.equal(core.PRESET_DEFS.length, 146);
   assert.equal(core.cavalrySnippets.PRESET_DEFS, core.PRESET_DEFS);
   assert.equal(Array.isArray(core.cavalrySnippets), false);
   assert.ok(Array.isArray(core.PRESET_PACKS));
@@ -69,10 +69,10 @@ test("core exposes the actual namespace and exact 145/16 registry without synthe
   // PRESET_PACKS covers the static library only; the runtime cloned_styles
   // category carries no PresetDefs and is served by list_cloned_styles.
   assert.deepEqual(core.PRESET_PACKS.map(pack => pack.name), core.PRESET_CATEGORIES.filter(cat => cat.presets !== "dynamic").map(cat => cat.label));
-  assert.deepEqual(core.PRESET_PACKS.map(pack => pack.presets.length), [5, 5, 5, 5, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 5, 20]);
+  assert.deepEqual(core.PRESET_PACKS.map(pack => pack.presets.length), [5, 5, 5, 5, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 5, 21]);
   const all = core.PRESET_PACKS.flatMap(pack => pack.presets);
   assert.deepEqual(all, core.PRESET_DEFS);
-  assert.equal(new Set(all.map(def => def.id)).size, 145);
+  assert.equal(new Set(all.map(def => def.id)).size, 146);
   for (const pack of core.PRESET_PACKS) {
     for (const def of pack.presets) {
       assert.equal(def.category, pack.id);

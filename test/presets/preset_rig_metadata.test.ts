@@ -161,10 +161,10 @@ test("derivePresetRig exposes every requested tuning term and honors an override
   assert.equal(overridden.springKind, "eased");
 });
 
-test("all 145 presets advertise a complete, internally consistent rig contract", () => {
+test("all 146 presets advertise a complete, internally consistent rig contract", () => {
   const all = listPresets();
-  assert.equal(all.length, 145);
-  assert.equal(PRESET_DEFS.length, 145);
+  assert.equal(all.length, 146);
+  assert.equal(PRESET_DEFS.length, 146);
   const springPresetIds: string[] = [];
   for (const preset of all) {
     const rig = preset.rig;
@@ -184,6 +184,6 @@ test("all 145 presets advertise a complete, internally consistent rig contract",
     }
     assert.deepEqual(presetRig(preset.id), rig, `${preset.id} has two different derived rigs`);
   }
-  assert.equal(springPresetIds.length, 113, "the library reaches a spring easing on 113 presets");
+  assert.equal(springPresetIds.length, 114, "the library reaches a spring easing on 114 presets");
   assert.equal(presetRig("no-such-preset"), null);
 });

@@ -8,7 +8,7 @@
 - Always prefer `_mg.*` helpers and procedural Cavalry nodes (`duplicator`, `subMesh`, `stagger`, `noise`, `oscillator`, `magicEasing`) over per-layer keyframe spam.
 - Return a compact value from scripts. Use `cavalry_inspect` for selection/root IDs; never dump the scene graph.
 - When tweaking existing layers, use `const id = _mg.sel()` (`api.getSelection()[0]`) instead of querying the scene.
-- Prefer `cavalry_run_preset` or `stallion -p` for standard rigs. The library has 145 presets in 16 category packs (`src/presets/packs/cat01…cat16`); discover IDs with `node bin/stallion-cli.mjs --list [category]`.
+- Prefer `cavalry_run_preset` or `stallion -p` for standard rigs. The library has 146 presets in 16 category packs (`src/presets/packs/cat01…cat16`); discover IDs with `node bin/stallion-cli.mjs --list [category]`.
 - New presets go in the matching category pack, compose shared `_rb.*` factories from `src/presets/rig_builders.ts`, and must run with default `{}` params. Add a coverage case to `test/presets/library.test.ts` when the param types or rig surface change.
 - Scripts are isolated IIFEs and grouped into one Undo step. Do not add another Undo group.
 - Build scenes with `cavalry_batch`, not one call per layer. Reserve `cavalry_run_script` for logic the op list cannot express.
@@ -32,12 +32,12 @@ Always load the matching open-source motion-design skills by stage from `.qoder/
 
 - `_mg` motion/camera helpers (`src/runtime/mg_helpers.ts`, `src/runtime/mg_helpers/motion.ts`): `splineAt`, `springAt`, `staggeredSpringAt`, `microBob`, Fitts cursor paths (`fittsMovementTime`, `fittsCursorTrajectory`), `multiSpring*`, `signalTween`, seeded `hash`/`loopNoise`, cubic-bezier sampling and morph equalizers (`equalizeMorphPaths`/`equalizeMorphSegments`), plus `projectPath3D`. Loop seams use `loopTime`/`loopValue`/`loopSeamError`: `hold` clamps and re-reads frame 0, `cycle` wraps whole cycles, `none` is identity.
 - `_rb` Duik rigs (`src/presets/rig_builders.ts`): `buildDuikConnectorRig`, `buildDuikTwoBoneIK` (law of cosines, pole flip, reach clamp), `buildDuikAutomationRig` (spring/swing/wheel/blink/looper) and `buildDuik2DCameraRig` (truck/pedestal/zoom/dutch + seeded handheld shake). `_rb` also carries `proj3D`, `bake3D`, `fibonacciSphere`, `greatCircle` and `hash` for baked 3D card worlds.
-- `cat16` `card_worlds` (`src/presets/packs/cat16_card_grid_worlds.ts`, presets 126-145): 3D card layouts, grid/masonry/FLIP morphs, card interactions, `lived_in_ui_shells` and `data_globe` (compact 22-city / 9-arc dataset). All presets run with `{}` and compose only `_rb` - preset VM tests do not inject `_mg`.
+- `cat16` `card_worlds` (`src/presets/packs/cat16_card_grid_worlds.ts`, presets 126-146): 3D card layouts, grid/masonry/FLIP morphs, card interactions `page_curl_card`/`page_turn_book`/`accordion_fold_card`, `lived_in_ui_shells` and `data_globe` (compact 22-city / 9-arc dataset). All presets run with `{}` and compose only `_rb` - preset VM tests do not inject `_mg`.
 - Audio (`src/tools/beats.ts`, `scripts/wave2/`, `sfx/wave2/`): BGM beds B00-B39 via `resolveBgmTrack`, action-bound cues via `ACTION_SFX_MAP`/`cuesFromActions`, `-14 LUFS` mastering, and `probePythonAudio()` which degrades to the TS synthesizer with a clear message when python is absent.
 - Storyboards (`src/tools/storyboards.ts`, `scripts/wave2/storyboards/`): 103 templates T001-T103. `storyboardFramePlan(id, { fps, overlapFrames })` ports motion-craft `buildSceneTimeline` (weighted scene ranges, exclusive end frames, overlap budget); `storyboardScaffold(id)` returns the compact scene/BGM shape. `promo.ts` accepts `storyboard: "T032"` to fill scene ranges, SFX cues and BGM metadata.
 
 <!-- PRESET_INDEX_START -->
-## Compressed Preset Catalog (145 SaaS Presets)
+## Compressed Preset Catalog (146 SaaS Presets)
 
 > **Rule**: "Browse the preset catalog first before writing _mg code. Never use raw api.create/api.set when an _mg preset exists."
 
@@ -187,6 +187,7 @@ fan_spread_cards | card_worlds | heading | A held deck fans open around a bottom
 polaroid_drop_table | card_worlds | heading | Polaroid photos drop onto a table, bounce once
 card_flip_3d | card_worlds | heading | Cards flip on their Y axis through zero
 page_curl_card | card_worlds | heading | A paper card peels its bottom-right corner as
+page_turn_book | card_worlds | heading | A two-page book spread whose right leaf turns
 accordion_fold_card | card_worlds | heading | Three panels fold flat in sequence like a
 lived_in_ui_shells | card_worlds | title,urlText | Product chrome (browser, terminal or Mac window) assembles
 data_globe | card_worlds | heading | Dotted Fibonacci globe with great-circle city arcs and

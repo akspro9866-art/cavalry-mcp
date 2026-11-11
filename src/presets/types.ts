@@ -43,7 +43,7 @@ export const PRESET_CATEGORIES: PresetCategory[] = [
   { id: "onboarding_plg", label: "Onboarding & Product-Led Growth", presets: "101-110" },
   { id: "social_proof_cta", label: "Social Proof & Call-to-Action", presets: "111-120" },
   { id: "procedural_saas", label: "Procedural SaaS Rigs & Physics", presets: "121-125" },
-  { id: "card_worlds", label: "3D Card Grids & Product Worlds", presets: "126-145" },
+  { id: "card_worlds", label: "3D Card Grids & Product Worlds", presets: "126-146" },
   { id: "cloned_styles", label: "Cloned Styles (runtime)", presets: "dynamic" },
 ];
 
