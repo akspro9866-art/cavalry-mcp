@@ -65,7 +65,7 @@
     "@scenery/cavalry-types": "^1.1.0",
     "@types/node": "^22.0.0",
     "@types/pngjs": "^6.0.5",
-    "eslint": "^9.39.2",
+    "eslint": "^10.14.0",
     "globals": "^16.5.0",
     "tsx": "^4.23.15",
     "typescript": "^5.7.0",
