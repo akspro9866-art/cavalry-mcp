@@ -36,7 +36,7 @@ export default tseslint.config(
 			'no-undef': 'warn',
 			'no-unreachable': 'warn',
 			'no-unused-vars': 'off',
-			'@typescript-eslint/no-unused-vars': 'warn',
+			'@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' }],
 			'@typescript-eslint/no-explicit-any': 'off',
 			'@typescript-eslint/no-require-imports': 'off',
 			'@typescript-eslint/no-unused-expressions': 'warn',
@@ -49,6 +49,12 @@ export default tseslint.config(
 		rules: {
 			// TypeScript already resolves identifiers and types.
 			'no-undef': 'off',
+		},
+	},
+	{
+		files: ['types/**/*.d.ts'],
+		rules: {
+			'@typescript-eslint/triple-slash-reference': 'off',
 		},
 	},
 )

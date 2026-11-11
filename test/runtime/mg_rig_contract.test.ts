@@ -399,7 +399,7 @@ test("semantic addressing rejects an unknown id and keeps literal ids working", 
 });
 
 test("_mg.patchSelected addresses layers by semantic id", () => {
-  const { result, api } = run(`
+  const { result } = run(`
     const card = _mg.shape("rectangle", "beat card");
     const other = _mg.shape("rectangle", "unrelated");
     const sem = _mg.semantic(card);

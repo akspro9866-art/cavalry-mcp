@@ -45,7 +45,7 @@ test("patch with frame writes only at the target frame and preserves neighbour t
 });
 
 test("patch at a frame restores the caller's keyframe selection", () => {
-  const { result, state } = run(`
+  const { result } = run(`
     const shape = _rb.rect("Bar", 200, 40, {});
     _mg.kf(shape, "opacity", [[0, 0], [24, 100]], "None");
     api.setSelectedKeyframeIds(["kf#1"]);
@@ -161,7 +161,7 @@ test("_mg.duplicator object form builds the rig with falloff and stagger", () =>
 });
 
 test("_mg.undoGroup collapses nesting into one undo pair", () => {
-  const { result, state } = run(`
+  const { result } = run(`
     _mg.undoGroup({ id: "outer", name: "Outer Batch", operations: () => {
       _rb.rect("A", 10, 10, {});
       _mg.undoGroup({ id: "inner", name: "Inner Batch", operations: () => {

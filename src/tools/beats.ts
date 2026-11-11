@@ -847,7 +847,7 @@ export async function probePythonAudio(python = "python"): Promise<{ available: 
     let error: string | null = null;
     child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
     child.stderr.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
-    child.on("error", (err: NodeJS.ErrnoException) => {
+    child.on("error", () => {
       error = `python not found (${python}). Install python or use the TS synthesizer.`;
       resolve({ code: null, stdout: "", error });
     });

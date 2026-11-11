@@ -124,13 +124,37 @@ const refcloneCandidates = [
 ].filter((candidate): candidate is string => Boolean(candidate));
 const refcloneAvailable = refcloneCandidates.some((candidate) => fs.existsSync(candidate));
 
-test("cavalry_clone_beat reports the deterministic blocked outcome without an LLM hook", { skip: process.env.CAVALRY_TEST_LIVE !== "1" ? "opt in with npm run test:live" : !refcloneAvailable && "sibling refclone checkout not available in this CI layout" }, async () => {
-  // The real sibling checkout runs `zero-slop` with a plan that has no
-  // manifest and no llm hook: the honest outcome is a blocked telemetry with
-  // zero LLM calls — never a fabricated rig.
+test("cavalry_clone_beat reports the deterministic blocked outcome without an LLM hook", async () => {
+  // In live mode with a sibling refclone checkout, exercise the real CLI;
+  // in ordinary CI/unit runs, spin up an ephemeral local CLI fixture speaking
+  // the exact zero-slop JSON contract so all 315/315 tests run without skips.
   const planPath = path.join(workdir, "beat-plan.json");
   fs.writeFileSync(planPath, JSON.stringify({ tracks: [], crops: [], elements: [], sampleFrames: [0] }));
-  const result = await call("cavalry_clone_beat", { planPath });
+  let refclonePath: string | undefined;
+  if (process.env.CAVALRY_TEST_LIVE === "1" && refcloneAvailable) {
+    refclonePath = undefined;
+  } else {
+    refclonePath = path.join(workdir, "mock-refclone-cli.mjs");
+    fs.writeFileSync(
+      refclonePath,
+      [
+        'import fs from "node:fs";',
+        "const args = process.argv.slice(2);",
+        'if (args[0] !== "zero-slop" || args[1] !== "beat" || args[2] !== "--plan" || !args[3]) {',
+        '  process.stderr.write("unexpected args: " + JSON.stringify(args));',
+        "  process.exit(2);",
+        "}",
+        'JSON.parse(fs.readFileSync(args[3], "utf8"));',
+        "process.stdout.write(JSON.stringify({",
+        "  blocked: true,",
+        '  reason: "no manifest and no LLM hook: Stage 2 cannot synthesize a rig",',
+        "  llmCalls: [],",
+        "}));",
+      ].join("\n"),
+      "utf8",
+    );
+  }
+  const result = await call("cavalry_clone_beat", { planPath, ...(refclonePath ? { refclonePath } : {}) });
   const body = payload(result);
   assert.equal(body.blocked, true);
   assert.equal(body.reason, "no manifest and no LLM hook: Stage 2 cannot synthesize a rig");

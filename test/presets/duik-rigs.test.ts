@@ -44,13 +44,6 @@ function makeApi() {
   return { api, calls };
 }
 
-interface RigDsl {
-  buildDuikConnectorRig: (name: string, o?: Record<string, unknown>) => Record<string, unknown>;
-  buildDuikTwoBoneIK: (name: string, o?: Record<string, unknown>) => Record<string, unknown>;
-  buildDuikAutomationRig: (name: string, o?: Record<string, unknown>) => Record<string, unknown>;
-  buildDuik2DCameraRig: (name: string, o?: Record<string, unknown>) => Record<string, unknown>;
-}
-
 function run(body: string) {
   const { api, calls } = makeApi();
   const context = vm.createContext({ api, console });

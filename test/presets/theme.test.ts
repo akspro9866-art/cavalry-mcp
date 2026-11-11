@@ -53,7 +53,7 @@ test("applyTheme binds palette, typography and radius for future layers", () => 
 });
 
 test("applyTheme retints existing layers in place and scales fonts/radius once", () => {
-  const { result, state } = run(`
+  const { result } = run(`
     const card = _rb.rect("Card", 120, 60, { fill: "#10B981", radius: 10, x: 0, y: 0 });
     const label = _rb.text("Old", 30, { color: "#F8FAFC" });
     const shapesBefore = api.getAllSceneLayers().filter((id) => {
