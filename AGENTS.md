@@ -8,7 +8,7 @@
 - Always prefer `_mg.*` helpers and procedural Cavalry nodes (`duplicator`, `subMesh`, `stagger`, `noise`, `oscillator`, `magicEasing`) over per-layer keyframe spam.
 - Return a compact value from scripts. Use `cavalry_inspect` for selection/root IDs; never dump the scene graph.
 - When tweaking existing layers, use `const id = _mg.sel()` (`api.getSelection()[0]`) instead of querying the scene.
-- Prefer `cavalry_run_preset` or `stallion -p` for standard rigs. The library has 120 presets in 14 category packs (`src/presets/packs/cat01…cat14`); discover IDs with `node bin/stallion-cli.mjs --list [category]`.
+- Prefer `cavalry_run_preset` or `stallion -p` for standard rigs. The library has 145 presets in 16 category packs (`src/presets/packs/cat01…cat16`); discover IDs with `node bin/stallion-cli.mjs --list [category]`.
 - New presets go in the matching category pack, compose shared `_rb.*` factories from `src/presets/rig_builders.ts`, and must run with default `{}` params. Add a coverage case to `test/presets/library.test.ts` when the param types or rig surface change.
 - Scripts are isolated IIFEs and grouped into one Undo step. Do not add another Undo group.
 - Build scenes with `cavalry_batch`, not one call per layer. Reserve `cavalry_run_script` for logic the op list cannot express.
@@ -28,8 +28,16 @@ Always load the matching open-source motion-design skills by stage from `.qoder/
 | **Stage 3 / 4: Procedural Compilation & Color** | [`color-motion`](.qoder/skills/color-motion/SKILL.md), [`kinetic-typography-skills`](.qoder/skills/kinetic-typography-skills/SKILL.md), [`data-animation-skills`](.qoder/skills/data-animation-skills/SKILL.md), [`motion-graphics`](.qoder/skills/motion-graphics/SKILL.md) | Compile procedural `_mg.*` / `_rb.*` rigs (`buildControllerNull`, `buildWeightedParentBlend`, `buildNinePointRoundedCard`, `buildAutoSizingPill`, `buildProximityFieldDuplicator`), `cat15` soft-cell/marker-sync presets, and `OKLCH` CSS gradients. |
 | **Stage 5 / 6: QA, Critique & Audio** | [`review-loop`](.qoder/skills/review-loop/SKILL.md), [`director-gate-check`](.qoder/skills/director-gate-check/SKILL.md), [`motion-design-critique`](.qoder/skills/motion-design-critique/SKILL.md), [`shot-composition`](.qoder/skills/shot-composition/SKILL.md), [`sound-design`](.qoder/skills/sound-design/SKILL.md) | Verify beat-indexed contact sheets against the 5 Studio Director Quality Gates (`>= 0.70s` readability holds, `5%`/`10%` safe zones, zero text collisions) and synthesize `-14 LUFS` WAV audio via `python -m sfx`. |
 
+## Wave-2 motion, rigs & audio
+
+- `_mg` motion/camera helpers (`src/runtime/mg_helpers.ts`, `src/runtime/mg_helpers/motion.ts`): `splineAt`, `springAt`, `staggeredSpringAt`, `microBob`, Fitts cursor paths (`fittsMovementTime`, `fittsCursorTrajectory`), `multiSpring*`, `signalTween`, seeded `hash`/`loopNoise`, cubic-bezier sampling and morph equalizers (`equalizeMorphPaths`/`equalizeMorphSegments`), plus `projectPath3D`. Loop seams use `loopTime`/`loopValue`/`loopSeamError`: `hold` clamps and re-reads frame 0, `cycle` wraps whole cycles, `none` is identity.
+- `_rb` Duik rigs (`src/presets/rig_builders.ts`): `buildDuikConnectorRig`, `buildDuikTwoBoneIK` (law of cosines, pole flip, reach clamp), `buildDuikAutomationRig` (spring/swing/wheel/blink/looper) and `buildDuik2DCameraRig` (truck/pedestal/zoom/dutch + seeded handheld shake). `_rb` also carries `proj3D`, `bake3D`, `fibonacciSphere`, `greatCircle` and `hash` for baked 3D card worlds.
+- `cat16` `card_worlds` (`src/presets/packs/cat16_card_grid_worlds.ts`, presets 126-145): 3D card layouts, grid/masonry/FLIP morphs, card interactions, `lived_in_ui_shells` and `data_globe` (compact 22-city / 9-arc dataset). All presets run with `{}` and compose only `_rb` - preset VM tests do not inject `_mg`.
+- Audio (`src/tools/beats.ts`, `scripts/wave2/`, `sfx/wave2/`): BGM beds B00-B39 via `resolveBgmTrack`, action-bound cues via `ACTION_SFX_MAP`/`cuesFromActions`, `-14 LUFS` mastering, and `probePythonAudio()` which degrades to the TS synthesizer with a clear message when python is absent.
+- Storyboards (`src/tools/storyboards.ts`, `scripts/wave2/storyboards/`): 103 templates T001-T103. `storyboardFramePlan(id, { fps, overlapFrames })` ports motion-craft `buildSceneTimeline` (weighted scene ranges, exclusive end frames, overlap budget); `storyboardScaffold(id)` returns the compact scene/BGM shape. `promo.ts` accepts `storyboard: "T032"` to fill scene ranges, SFX cues and BGM metadata.
+
 <!-- PRESET_INDEX_START -->
-## Compressed Preset Catalog (120 SaaS Presets)
+## Compressed Preset Catalog (145 SaaS Presets)
 
 > **Rule**: "Browse the preset catalog first before writing _mg code. Never use raw api.create/api.set when an _mg preset exists."
 
@@ -162,5 +170,25 @@ marker_sync_cascade | procedural_saas | headline | Beat-marker synchronized dupl
 spring_text_reveal | procedural_saas | headline,subheadline | Sub-mesh staggered spring typography reveal with baseline clipping
 shape_morph_loop | procedural_saas | label | Procedural hero icon morph loop with radial burst
 csv_localiser_batch | procedural_saas | localeEn,localeDe,localeJa | CSV-driven localization and AB-testing rig with auto-sizing pills
+coverflow_3d | card_worlds | heading | Coverflow shelf of album cards rotated on Y
+ferris_wheel_cards | card_worlds | heading | Six cards ride a giant wheel, scaling and
+cube_roll_3d | card_worlds | label | A four-faced cube rolls forward, each face landing
+cylinder_cards_3d | card_worlds | heading | Eight cards wrap a spinning cylinder with depth-based
+helix_cards_3d | card_worlds | heading | Cards spiral up a helix, each at its
+sphere_cards_3d | card_worlds | heading | Forty cards distributed on a Fibonacci sphere rotating
+z_depth_tunnel | card_worlds | heading | Cards stream out of a z-depth tunnel, dimming
+bento_grid_reveal | card_worlds | heading | Nine bento tiles cascade in three waves with
+explode_to_grid | card_worlds | heading | Scattered cards explode outward then settle into a
+layout_morph_grid_to_carousel | card_worlds | heading | FLIP layout morph: every card keeps its identity
+masonry_zoom_detail | card_worlds | heading | A masonry wall of cards pushes in as
+grid_recap_zoom_out | card_worlds | heading | A twelve-tile recap grid settles from an oversized
+card_stack_swipe | card_worlds | heading | A tinder-style stack where the top card swipes
+fan_spread_cards | card_worlds | heading | A held deck fans open around a bottom
+polaroid_drop_table | card_worlds | heading | Polaroid photos drop onto a table, bounce once
+card_flip_3d | card_worlds | heading | Cards flip on their Y axis through zero
+page_curl_card | card_worlds | heading | A paper card peels its bottom-right corner as
+accordion_fold_card | card_worlds | heading | Three panels fold flat in sequence like a
+lived_in_ui_shells | card_worlds | title,urlText | Product chrome (browser, terminal or Mac window) assembles
+data_globe | card_worlds | heading | Dotted Fibonacci globe with great-circle city arcs and
 ```
 <!-- PRESET_INDEX_END -->

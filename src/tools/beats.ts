@@ -693,3 +693,171 @@ export function importNleMarkers(payload: unknown, fallbackFps = 60): BeatAnalys
     .filter((v): v is number => v != null && v >= 0);
   return parseBeatPayload({ fps, frames: resolveFrames }, fps);
 }
+
+/* --------------------------------------------------------------------------
+ * Wave-2 audio catalogue: BGM B00-B39, action-bound SFX cues, and the Python
+ * mastering engine probe. Ported from motion-craft references/SOUND.md and
+ * scripts/synth-audio.mjs; the wav set lives in sfx/wave2/.
+ * ----------------------------------------------------------------------- */
+
+export interface BgmTrack {
+  id: string;
+  name: string;
+  bpm: number;
+  character: string;
+}
+
+const BGM_SEED: Array<[string, number, string]> = [
+  ["Room Tone Ambience", 0, "no melody, pure room"],
+  ["Lo-Fi Dusty Rhodes", 84, "dusty keys, tape hiss"],
+  ["Synthwave Night Drive", 110, "neon arpeggio, gated drums"],
+  ["Dark Sub & Pulse", 98, "sub weight, minimal pulse"],
+  ["Glitch Electro Cut", 124, "stuttered electro, digital cuts"],
+  ["Boom-Bap Street", 90, "swung drums, vinyl chops"],
+  ["Halftime 808 Trap", 140, "half-time trap, 808 slides"],
+  ["Funk Bounce Groove", 110, "clavinet bounce, live bass"],
+  ["Playful Marimba Studio", 116, "marimba hook, bright shaker"],
+  ["Minimal Tech Pulse", 122, "clicky tech house pulse"],
+  ["Warm Ambient Pad", 68, "slow evolving pad"],
+  ["Cinematic Tension", 78, "ostinato strings, low pulse"],
+  ["Synthetic Orchestra", 112, "hybrid brass and synth"],
+  ["8-Bit Chiptune Arcade", 140, "square leads, arcade drums"],
+  ["Cool Jazz Brush Swing", 118, "brushed swing, upright bass"],
+  ["Vintage Ragtime Stride", 106, "stride piano, ragtime feel"],
+  ["Exotica Vibraphone Lounge", 98, "vibes, lounge percussion"],
+  ["Nusantara Metallophone", 78, "slendro/pelog metallophone"],
+  ["Industrial Mechanica", 118, "metal hits, machine rhythm"],
+  ["Warm Acoustic Pluck", 92, "felt pluck, soft room"],
+  ["Deep Mystery Drone", 64, "modal drone, sparse hits"],
+  ["Clean Corporate Editorial", 108, "clean corporate bed"],
+  ["Fast Breakbeat Kinetic", 158, "fast breakbeat, kinetic edits"],
+  ["Taiko & Rim Percussion", 108, "taiko hits, rim clicks"],
+  ["Precision Clockwork Tick", 112, "clockwork ticks, precise grid"],
+  ["Apple Keynote Minimal Pluck", 116, "felt marimba, soft sub, rim click"],
+  ["Framer / Linear SaaS Groove", 122, "warm house bass, Rhodes 7ths"],
+  ["Vox Documentary Piano & Pulse", 104, "felt piano, pizzicato, clock"],
+  ["Phonk / Drift High Energy", 135, "cowbell, 808, sharp snare"],
+  ["UK Garage / 2-Step Tech", 132, "shuffling 2-step, warm organ"],
+  ["Bedroom Indie Dream Synth", 110, "chorus synth, indie drums"],
+  ["Neo-Soul Coffeehouse Rhodes", 88, "9th Rhodes, lazy swing"],
+  ["Liquid Drum & Bass Flow", 168, "atmospheric pads, breakbeat"],
+  ["Future Bass Uplifting Showcase", 138, "supersaw LFO, rising arp"],
+  ["Bossa Nova Sore Santai", 114, "nylon guitar, bossa rimshot"],
+  ["Dark Matrix Techno", 128, "acid bass, four-on-the-floor"],
+  ["Sunny Acoustic Explainer", 112, "bright acoustic, light perc"],
+  ["Cinematic Hybrid Launch", 96, "string ostinato, taiko hits"],
+  ["80s Vaporwave Mallsoft", 82, "FM keys, gated snare"],
+  ["Upbeat Nu-Disco Funk", 118, "slap bass, disco groove"],
+];
+
+/** The 40 procedural BGM beds, B00-B39 (motion-craft SOUND.md catalogue). */
+export const BGM_TRACKS: BgmTrack[] = BGM_SEED.map(([name, bpm, character], index) => ({
+  id: `B${String(index).padStart(2, "0")}`,
+  name,
+  bpm,
+  character,
+}));
+
+/** Resolve B00-B39 case-insensitively; null for unknown ids. */
+export function resolveBgmTrack(id: string): BgmTrack | null {
+  const wanted = String(id ?? "").trim().toUpperCase();
+  return BGM_TRACKS.find((track) => track.id === wanted) ?? null;
+}
+
+export type ActionSfx =
+  | "reveal"
+  | "popIn"
+  | "popPlop"
+  | "click"
+  | "hover"
+  | "typing"
+  | "progress"
+  | "success"
+  | "error"
+  | "transition"
+  | "impact"
+  | "dataReveal"
+  | "chime";
+
+export interface ActionSfxBinding {
+  kind: SfxKind;
+  gainDb: number;
+  durationMs: number;
+  offsetFrames: number;
+}
+
+/**
+ * Action-bound SFX map: the action that happens on screen decides the cue, so
+ * sound never lands on an arbitrary beat. Offsets keep the cue just behind the
+ * visual (render latency of the eye).
+ */
+export const ACTION_SFX_MAP: Record<ActionSfx, ActionSfxBinding> = {
+  reveal: { kind: "whoosh", gainDb: -3, durationMs: 210, offsetFrames: -2 },
+  popIn: { kind: "pop", gainDb: -2, durationMs: 75, offsetFrames: 0 },
+  popPlop: { kind: "pop", gainDb: -4, durationMs: 90, offsetFrames: 2 },
+  click: { kind: "click", gainDb: 0, durationMs: 35, offsetFrames: 0 },
+  hover: { kind: "click", gainDb: -8, durationMs: 20, offsetFrames: -1 },
+  typing: { kind: "click", gainDb: -6, durationMs: 18, offsetFrames: 0 },
+  progress: { kind: "chime", gainDb: -5, durationMs: 120, offsetFrames: 0 },
+  success: { kind: "chime", gainDb: -1, durationMs: 320, offsetFrames: 0 },
+  error: { kind: "subDrop", gainDb: -1, durationMs: 220, offsetFrames: 0 },
+  transition: { kind: "whoosh", gainDb: -3, durationMs: 240, offsetFrames: -3 },
+  impact: { kind: "subDrop", gainDb: 0, durationMs: 260, offsetFrames: 0 },
+  dataReveal: { kind: "riser", gainDb: -4, durationMs: 300, offsetFrames: -4 },
+  chime: { kind: "chime", gainDb: -2, durationMs: 280, offsetFrames: 0 },
+};
+
+export interface ActionCueInput {
+  action: ActionSfx | string;
+  frame: number;
+  label?: string;
+}
+
+/** Map on-screen actions to concrete SFX cues (unknown actions are dropped). */
+export function cuesFromActions(actions: ActionCueInput[], fps = 30): SfxCueSpec[] {
+  const cues: SfxCueSpec[] = [];
+  for (const entry of actions) {
+    const binding = ACTION_SFX_MAP[entry.action as ActionSfx];
+    if (!binding) continue;
+    const frame = Math.max(0, Math.round(Number(entry.frame) || 0) + binding.offsetFrames);
+    cues.push({
+      frame,
+      timeSeconds: Math.round((frame / (fps > 0 ? fps : 30)) * 1000) / 1000,
+      kind: binding.kind,
+      gainDb: binding.gainDb,
+      durationMs: binding.durationMs,
+      label: entry.label ?? `${entry.action}_${frame}`,
+    });
+  }
+  return cues;
+}
+
+/** Python mastering engine shipped with the repo (xiaoma-studio audio.py). */
+export const PYTHON_AUDIO_SCRIPT = "scripts/wave2/audio.py";
+
+/**
+ * Probe the python interpreter at runtime. Returns a structured result instead
+ * of throwing, so callers degrade to the built-in TS synthesizer with a clear
+ * message rather than failing a whole promo render.
+ */
+export async function probePythonAudio(python = "python"): Promise<{ available: boolean; command: string; version: string | null; error: string | null }> {
+  const result = await new Promise<{ code: number | null; stdout: string; error: string | null }>((resolve) => {
+    const child = spawn(python, ["--version"], { windowsHide: true });
+    let stdout = "";
+    let error: string | null = null;
+    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
+    child.stderr.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
+    child.on("error", (err: NodeJS.ErrnoException) => {
+      error = `python not found (${python}). Install python or use the TS synthesizer.`;
+      resolve({ code: null, stdout: "", error });
+    });
+    child.on("close", (code) => resolve({ code, stdout: stdout.trim(), error }));
+  });
+  const available = result.code === 0 && result.error == null;
+  return {
+    available,
+    command: python,
+    version: available ? result.stdout || null : null,
+    error: available ? null : result.error ?? "python probe failed",
+  };
+}

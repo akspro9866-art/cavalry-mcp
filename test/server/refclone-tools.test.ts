@@ -112,7 +112,7 @@ test("strict tool schemas reject malformed input before loading an adapter", asy
       {}, { beatSpec: [] }, { beatSpec: "JS" }, { beatSpec: {}, maxIterations: 0 },
       { beatSpec: {}, maxIterations: 9 }, { beatSpec: {}, maxIterations: 1.5 }, { beatSpec: {}, script: "evil" },
     ]) assert.equal((await session.call("refclone_compile_and_converge", args)).isError, true);
-    for (const args of [{ packNames: "typography" }, { packNames: Array(16).fill("typography") }, { packNames: [], code: "evil" }]) {
+    for (const args of [{ packNames: "typography" }, { packNames: Array(33).fill("typography") }, { packNames: [], code: "evil" }]) {
       assert.equal((await session.call("refclone_get_preset_signatures", args)).isError, true);
     }
     assert.equal(loads, 0);
@@ -207,8 +207,8 @@ test("signatures contain only requested exact pack IDs, all metadata and no scri
       }
     }
     const all = getPresetSignatures(PRESET_PACKS.map(pack => pack.id));
-    assert.equal(all.packs.length, 15);
-    assert.equal(all.packs.flatMap(pack => pack.presets).length, 125);
+    assert.equal(all.packs.length, 16);
+    assert.equal(all.packs.flatMap(pack => pack.presets).length, 145);
     for (const invalid of ["unknown", "1", "Typography", "cat01_typography"]) {
       const result = await session.call("refclone_get_preset_signatures", { packNames: ["typography", invalid] });
       assert.equal(result.isError, true);

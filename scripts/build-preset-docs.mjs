@@ -1,5 +1,5 @@
 /**
- * Scan the 120 SaaS animation presets in `cavalry-mcp`, generate lazy
+ * Scan the generated SaaS animation presets in `cavalry-mcp`, generate lazy
  * `{preset}.doc.mjs` discovery modules (each capped at <= 110 tokens) under
  * `dist/presets/docs/`, and update `AGENTS.md` at the repo root with the
  * compressed 1-line-per-preset catalog (`id | category | requiredParams | 8-word summary`)
@@ -81,7 +81,7 @@ for (const def of PRESET_DEFS) {
 const loaderSource = `export const PRESET_DOC_FILES = ${JSON.stringify(indexMap, null, 2)};\nexport async function loadPresetDoc(presetId) {\n  const rel = PRESET_DOC_FILES[presetId];\n  if (!rel) return null;\n  const mod = await import(new URL(rel, import.meta.url).href);\n  return mod.PRESET_DOC ?? mod.default ?? null;\n}\n`;
 writeFileSync(path.join(docsDir, "index.mjs"), loaderSource, "utf8");
 
-// Update AGENTS.md with the explicit rule and 120-line compressed index
+// Update AGENTS.md with the explicit rule and compressed index
 const agentsPath = path.join(root, "AGENTS.md");
 const existingAgents = existsSync(agentsPath) ? readFileSync(agentsPath, "utf8") : "# Cavalry agent rules\n";
 const startMarker = "<!-- PRESET_INDEX_START -->";
@@ -90,7 +90,7 @@ const endMarker = "<!-- PRESET_INDEX_END -->";
 const catalogLines = buildCompactPresetCatalogLines();
 const catalogSection = [
   startMarker,
-  "## Compressed Preset Catalog (120 SaaS Presets)",
+  `## Compressed Preset Catalog (${PRESET_DEFS.length} SaaS Presets)`,
   "",
   `> **Rule**: "${PRESET_CATALOG_AGENT_RULE}"`,
   "",

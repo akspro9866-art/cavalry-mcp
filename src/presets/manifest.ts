@@ -45,6 +45,7 @@ export const PRESET_MANIFEST_CATEGORY_CODES: Record<PresetCategoryId, string> = 
   onboarding_plg: "pl",
   social_proof_cta: "ct",
   procedural_saas: "ps",
+  card_worlds: "cw",
   cloned_styles: "cs",
 };
 

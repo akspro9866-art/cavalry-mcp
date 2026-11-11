@@ -20,6 +20,12 @@ import {
   type SfxCueSpec,
   type TimelineJsonContract,
 } from "./beats.js";
+import {
+  storyboardFramePlan,
+  storyboardScaffoldFromPlan,
+  type StoryboardPlan,
+  type StoryboardScaffold,
+} from "./storyboards.js";
 
 export interface PromoSceneInput {
   comp: string;
@@ -35,7 +41,7 @@ export interface PromoTransition {
 }
 
 export interface PromoPlanInput {
-  scenes: Array<string | PromoSceneInput>;
+  scenes?: Array<string | PromoSceneInput> | null;
   out?: string;
   fps?: number;
   width?: number;
@@ -43,6 +49,10 @@ export interface PromoPlanInput {
   audio?: string | null;
   sfxCueSheet?: SfxCueSpec[] | TimelineJsonContract | null;
   beatFrames?: number[] | null;
+  /** Storyboard template id (T001-T103). Fills scene timing, SFX cues and BGM metadata. */
+  storyboard?: string | null;
+  /** Overlap budget for storyboard transitions (default 10 frames). */
+  storyboardOverlapFrames?: number;
   workDir?: string;
   scale?: number;
   crf?: number;
@@ -71,6 +81,7 @@ export interface NormalizedPromo {
   audio: string | null;
   sfxCueSheet?: SfxCueSpec[] | TimelineJsonContract | null;
   beatFrames?: number[] | null;
+  storyboard?: StoryboardPlan;
   workDir: string;
   scale: number;
   crf: number;
@@ -111,6 +122,7 @@ export interface PromoResult {
   commands: PromoCommand[];
   log: string[];
   sfxResult?: SfxCompileResult;
+  storyboard?: StoryboardScaffold;
 }
 
 export interface PromoOptions {
@@ -142,26 +154,50 @@ function padFrame(frame: number): string {
 export function normalizePromoPlan(input: unknown, workDir?: string): NormalizedPromo {
   if (!input || typeof input !== "object") throw new Error("Promo plan must be a JSON object");
   const raw = input as PromoPlanInput;
-  if (!Array.isArray(raw.scenes) || raw.scenes.length === 0) throw new Error("Promo plan needs a non-empty scenes array");
-
   const fps = positive(raw.fps, 60);
+
+  const storyboardPlan = raw.storyboard
+    ? storyboardFramePlan(String(raw.storyboard), {
+        fps,
+        ...(raw.storyboardOverlapFrames != null ? { overlapFrames: Number(raw.storyboardOverlapFrames) } : {}),
+      })
+    : undefined;
+
+  const entries: Array<string | PromoSceneInput> =
+    Array.isArray(raw.scenes) && raw.scenes.length > 0
+      ? raw.scenes
+      : storyboardPlan
+        // Placeholder comps keep storyboard-only scaffolding valid; replace them
+        // with real Cavalry comp ids before rendering.
+        ? storyboardPlan.scenes.map((scene) => ({ comp: `${storyboardPlan.id}_scene_${String(scene.sceneIndex).padStart(2, "0")}` }))
+        : [];
+  if (!entries.length) throw new Error("Promo plan needs a non-empty scenes array");
+
   const resolvedWork = path.resolve(workDir ?? raw.workDir ?? path.join(os.homedir(), ".cavalry-mcp", "promos", new Date().toISOString().replace(/[:.]/g, "-")));
-  const scenes: PromoScenePlan[] = raw.scenes.map((entry, index) => {
+  const scenes: PromoScenePlan[] = entries.map((entry, index) => {
     const scene: PromoSceneInput = typeof entry === "string" ? { comp: entry } : entry;
     if (!scene || typeof scene !== "object" || !scene.comp) {
       throw new Error(`Promo scene ${index + 1} needs a comp id`);
     }
+    const beat = storyboardPlan?.scenes[index];
     return {
       index,
       comp: String(scene.comp),
       name: String(scene.name ?? `scene_${String(index + 1).padStart(2, "0")}`),
-      start: frameNumber(scene.start, null),
-      end: frameNumber(scene.end, null),
+      start: frameNumber(scene.start, beat ? beat.startFrame : null),
+      end: frameNumber(scene.end, beat ? beat.endFrame - 1 : null),
       step: Math.max(1, Math.round(positive(scene.step, 1))),
       dir: path.join(resolvedWork, String(scene.name ?? `scene_${String(index + 1).padStart(2, "0")}`)),
       maxFrames: Math.max(1, Math.round(positive(raw.maxFramesPerScene, 1200))),
     };
   });
+
+  const sfxCueSheet =
+    raw.sfxCueSheet !== undefined
+      ? raw.sfxCueSheet
+      : storyboardPlan && storyboardPlan.cues.length > 0
+        ? storyboardPlan.cues
+        : null;
 
   return {
     scenes,
@@ -170,8 +206,9 @@ export function normalizePromoPlan(input: unknown, workDir?: string): Normalized
     width: Math.round(positive(raw.width, 1920)),
     height: Math.round(positive(raw.height, 1080)),
     audio: raw.audio ? path.resolve(raw.audio) : null,
-    ...(raw.sfxCueSheet ? { sfxCueSheet: raw.sfxCueSheet } : {}),
+    ...(sfxCueSheet ? { sfxCueSheet } : {}),
     ...(Array.isArray(raw.beatFrames) ? { beatFrames: raw.beatFrames } : {}),
+    ...(storyboardPlan ? { storyboard: storyboardPlan } : {}),
     workDir: resolvedWork,
     scale: positive(raw.scale, 100),
     crf: positive(raw.crf, 18),
@@ -394,6 +431,15 @@ export async function runPromo(input: unknown, opts: PromoOptions = {}): Promise
   let manifest: PromoManifest;
   const log: string[] = [];
 
+  if (plan.storyboard) {
+    const sb = plan.storyboard;
+    log.push(
+      `storyboard ${sb.id} · ${sb.title} · ${sb.totalFrames}f @ ${sb.fps}fps · bgm ${sb.bgm?.id ?? "none"}${
+        plan.scenes.length !== sb.scenes.length ? ` (${plan.scenes.length} comps for ${sb.scenes.length} storyboard beats)` : ""
+      }`,
+    );
+  }
+
   if (dryRun) {
     manifest = predictManifest(plan);
   } else {
@@ -460,5 +506,6 @@ export async function runPromo(input: unknown, opts: PromoOptions = {}): Promise
     commands,
     log,
     ...(sfxResult ? { sfxResult } : {}),
+    ...(plan.storyboard ? { storyboard: storyboardScaffoldFromPlan(plan.storyboard) } : {}),
   };
 }

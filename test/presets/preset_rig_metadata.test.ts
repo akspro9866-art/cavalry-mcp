@@ -96,10 +96,12 @@ test("the easing vocabulary is read from _rb and agrees with _rb.ease", () => {
 });
 
 test("builder default easings are discovered from source, not restated by hand", () => {
-  assert.equal(Object.keys(RB_HELPER_EASES).length, 9);
+  assert.equal(Object.keys(RB_HELPER_EASES).length, 11);
   assert.equal(RB_HELPER_EASES.pop, "SpringOut");
   assert.equal(RB_HELPER_EASES.fade, "SlowInSlowOut");
   assert.equal(RB_HELPER_EASES.slide, "SlowOut");
+  assert.equal(RB_HELPER_EASES.buildDuikConnectorRig, "SlowInSlowOut");
+  assert.equal(RB_HELPER_EASES.buildDuik2DCameraRig, "SlowInSlowOut");
   for (const easing of Object.values(RB_HELPER_EASES)) assert.ok(EASE_VALID.includes(easing));
   const code = `_rb.pop(a); _rb.fade(a); _rb.slide(a);`;
   assert.deepEqual(easingsInCode(code), [], "helper defaults are not preset-code literals");
@@ -159,10 +161,10 @@ test("derivePresetRig exposes every requested tuning term and honors an override
   assert.equal(overridden.springKind, "eased");
 });
 
-test("all 125 presets advertise a complete, internally consistent rig contract", () => {
+test("all 145 presets advertise a complete, internally consistent rig contract", () => {
   const all = listPresets();
-  assert.equal(all.length, 125);
-  assert.equal(PRESET_DEFS.length, 125);
+  assert.equal(all.length, 145);
+  assert.equal(PRESET_DEFS.length, 145);
   const springPresetIds: string[] = [];
   for (const preset of all) {
     const rig = preset.rig;
@@ -182,6 +184,6 @@ test("all 125 presets advertise a complete, internally consistent rig contract",
     }
     assert.deepEqual(presetRig(preset.id), rig, `${preset.id} has two different derived rigs`);
   }
-  assert.equal(springPresetIds.length, 95, "the library reaches a spring easing on 95 presets");
+  assert.equal(springPresetIds.length, 113, "the library reaches a spring easing on 113 presets");
   assert.equal(presetRig("no-such-preset"), null);
 });

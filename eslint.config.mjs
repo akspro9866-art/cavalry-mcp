@@ -10,6 +10,10 @@ export default tseslint.config(
 			'node_modules/**',
 			'.cloned-renders/**',
 			'tmp-live-*',
+			// Agent skills are byte-identical vendored copies (see skill-parity.mjs);
+			// linting them would demand edits that parity forbids.
+			'.qoder/skills/**',
+			'.agents/skills/**',
 		],
 	},
 	js.configs.recommended,

@@ -1,3 +1,5 @@
+import Bezier from "bezier-easing";
+import SVGPathCommander from "svg-path-commander";
 import { RB_HELPERS_SOURCE } from "../presets/rig_builders.js";
 import { MG_SCENE_SOURCE } from "./mg_helpers/scene.js";
 import { MG_EASING_SOURCE } from "./mg_helpers/easing.js";
@@ -9,6 +11,7 @@ import { MG_SEMANTIC_SOURCE } from "./mg_helpers/semantic.js";
 import { MG_KEYFRAMES_SOURCE } from "./mg_helpers/keyframes.js";
 import { MG_STUDIO_SOURCE } from "./mg_helpers/studio.js";
 import { MG_CANVALRY_SOURCE } from "./mg_helpers/canvalry.js";
+import { MG_MOTION_SOURCE } from "./mg_helpers/motion.js";
 import { MG_RASTER_SOURCE } from "./mg_helpers/raster.js";
 
 /** JavaScript injected into Cavalry; this module is never executed by Node. */
@@ -23,6 +26,7 @@ const MG_BASE_SOURCE =
   MG_KEYFRAMES_SOURCE +
   MG_STUDIO_SOURCE +
   MG_CANVALRY_SOURCE +
+  MG_MOTION_SOURCE +
   MG_RASTER_SOURCE;
 
 /** _mg legacy DSL + _rb rig builders, injected into one script scope. */
@@ -443,4 +447,378 @@ export function generateSpringCurve(
     points.push([startFrame + i, Math.round(val * 10000) / 10000]);
   }
   return points;
+}
+
+/* ------------------------------------------------------------------ *
+ * Wave-2 compile-time motion math (Node side).
+ *
+ * These mirror the injected `_mg` motion helpers so presets can bake pure
+ * keyframe tables at COMPILE time. They never run inside Cavalry; the emitted
+ * expressions remain pure functions of frame t. Ports of motion-craft
+ * easing-and-timing, motion-launch-videos core.js and motion-canvas tweening.
+ * ------------------------------------------------------------------ */
+
+/** A camera/spline waypoint: `[frame, ...values]` (motion-craft splineAt). */
+export type SplineKeyframe = number[];
+
+/** One superposed spring event (motion-launch-videos Prop). */
+export interface SpringEvent {
+  t: number;
+  /** Relative delta for a spring move; ignored when `set` is true. */
+  d?: number;
+  /** `[zeta, omega]` damping ratio + natural frequency. */
+  sp?: [number, number];
+  /** Instant jump that cancels earlier springs. */
+  set?: boolean;
+  /** Absolute value when `set` is true. */
+  v?: number;
+}
+
+export interface MultiSpringOptions {
+  dur?: number;
+  loop?: "hold" | "cycle" | "none";
+}
+
+const clampNum = (v: number, min: number, max: number): number => Math.max(min, Math.min(max, v));
+
+/**
+ * C1-continuous cubic Hermite spline (motion-craft `splineAt`). Pure compile-time
+ * mirror of `_mg.splineAt`; holds perfectly still between equal-valued waypoints.
+ */
+export function splineAt(frame: number, keyframes: SplineKeyframe[]): number[] {
+  const n = keyframes.length;
+  if (n === 0) return [];
+  if (frame <= keyframes[0][0]) return keyframes[0].slice(1);
+  if (frame >= keyframes[n - 1][0]) return keyframes[n - 1].slice(1);
+  let i = 0;
+  for (let k = 0; k < n - 1; k++) {
+    if (frame >= keyframes[k][0] && frame <= keyframes[k + 1][0]) {
+      i = k;
+      break;
+    }
+  }
+  const p0 = keyframes[Math.max(0, i - 1)];
+  const p1 = keyframes[i];
+  const p2 = keyframes[i + 1];
+  const p3 = keyframes[Math.min(n - 1, i + 2)];
+  const dt = p2[0] - p1[0];
+  if (dt <= 0) return p1.slice(1);
+  const u = clampNum((frame - p1[0]) / dt, 0, 1);
+  const u2 = u * u;
+  const u3 = u2 * u;
+  const dims = p1.length - 1;
+  const out: number[] = new Array(dims);
+  for (let d = 1; d <= dims; d++) {
+    const y0 = p0[d], y1 = p1[d], y2 = p2[d], y3 = p3[d];
+    const m1 = i === 0 ? 0
+      : Math.abs(y1 - y0) < 1e-4 || Math.abs(y2 - y1) < 1e-4 ? 0
+      : ((y2 - y0) / (p2[0] - p0[0])) * dt;
+    const m2 = i + 1 === n - 1 ? 0
+      : Math.abs(y3 - y2) < 1e-4 || Math.abs(y2 - y1) < 1e-4 ? 0
+      : ((y3 - y1) / (p3[0] - p1[0])) * dt;
+    out[d - 1] =
+      (2 * u3 - 3 * u2 + 1) * y1 +
+      (u3 - 2 * u2 + u) * m1 +
+      (-2 * u3 + 3 * u2) * y2 +
+      (u3 - u2) * m2;
+  }
+  return out;
+}
+
+/** Smooth spring 0 -> 1 from frame `start` (motion-craft `springAt`), closed-form. */
+export function springAt(
+  frame: number,
+  start: number,
+  fps = 30,
+  config: { damping?: number; stiffness?: number; mass?: number; initialVelocity?: number } = {},
+): number {
+  return evaluateSpring((frame - start) / Math.max(1e-6, fps), {
+    stiffness: config.stiffness ?? 140,
+    damping: config.damping ?? 14,
+    mass: config.mass ?? 0.75,
+    initialVelocity: config.initialVelocity ?? 0,
+  });
+}
+
+/** Overlapping-action follow-through spring (motion-craft `staggeredSpringAt`). */
+export function staggeredSpringAt(
+  frame: number,
+  baseStart: number,
+  layerIndex: number,
+  fps = 30,
+  stepFrames = 3,
+): number {
+  const idx = layerIndex || 0;
+  return springAt(frame, baseStart + idx * stepFrames, fps, {
+    damping: 13 + idx * 1.2,
+    stiffness: Math.max(115, 155 - idx * 12),
+    mass: 0.68 + idx * 0.08,
+  });
+}
+
+/** Phase-shifted micro-bob (motion-craft `microBob`). Pure sin/cos of frame. */
+export function microBob(
+  frame: number,
+  elementIndex = 0,
+  amplitudePx = 3.5,
+  speed = 0.22,
+): { dy: number; rotDeg: number } {
+  const phase = elementIndex * 1.85;
+  return {
+    dy: Math.sin(frame * speed + phase) * amplitudePx,
+    rotDeg: Math.cos(frame * (speed * 0.8) + phase) * (amplitudePx * 0.25),
+  };
+}
+
+/** Fitts's Law movement time in seconds: `a + b * log2(2D / W)`. */
+export function fittsMovementTime(distance: number, targetWidth = 48, a = 0.05, b = 0.12): number {
+  const D = Math.max(1, distance);
+  const W = Math.max(1, targetWidth);
+  return a + b * Math.log2((2 * D) / W);
+}
+
+/**
+ * Build a Fitts-timed cursor trajectory: each hop's duration derives from
+ * `fittsMovementTime`, with an overshoot + correction submovement before clicks.
+ * targets: `[{ x, y, width?, click? }]`. Returns `[frame, x, y][]` waypoints.
+ */
+export function fittsCursorTrajectory(
+  targets: Array<{ x: number; y: number; width?: number; click?: boolean }>,
+  opts: { fps?: number; startFrame?: number; a?: number; b?: number; overshootPx?: number } = {},
+): Array<[number, number, number]> {
+  const fps = Math.max(1, opts.fps ?? 30);
+  const over = opts.overshootPx ?? 4.5;
+  const out: Array<[number, number, number]> = [];
+  let frame = Math.round(opts.startFrame ?? 0);
+  let prevX = targets.length ? targets[0].x : 0;
+  let prevY = targets.length ? targets[0].y : 0;
+  out.push([frame, prevX, prevY]);
+  for (let i = 1; i < targets.length; i++) {
+    const tgt = targets[i];
+    const dx = tgt.x - prevX, dy = tgt.y - prevY;
+    const dist = Math.max(1, Math.hypot(dx, dy));
+    const mt = fittsMovementTime(dist, tgt.width ?? 48, opts.a, opts.b);
+    const travel = Math.max(2, Math.round(mt * fps));
+    const arrive = frame + travel;
+    if (tgt.click) {
+      const fOver = Math.max(frame + 1, arrive - Math.round(travel * 0.28));
+      const fSettle = Math.max(fOver + 1, arrive - Math.round(travel * 0.16));
+      out.push([fOver, tgt.x + (dx / dist) * over, tgt.y + (dy / dist) * over]);
+      out.push([fSettle, tgt.x, tgt.y]);
+    }
+    out.push([arrive, tgt.x, tgt.y]);
+    frame = arrive;
+    prevX = tgt.x;
+    prevY = tgt.y;
+  }
+  return out.sort((p, q) => p[0] - q[0]);
+}
+
+const settleOf = (sp: [number, number]): number => 16 / Math.max(1e-6, sp[0] * sp[1]);
+
+function springStep(tau: number, sp: [number, number]): number {
+  if (tau <= 0) return 0;
+  if (tau >= settleOf(sp)) return 1;
+  return evaluateSpring(tau, {
+    stiffness: sp[1] * sp[1],
+    damping: 2 * sp[0] * sp[1],
+    mass: 1,
+  });
+}
+
+/**
+ * Closed-form multi-spring sum (motion-launch-videos `Prop.at`): base value plus
+ * one superposed spring per target change, with hold/cycle seam carry-over.
+ * Pure function of `t`; no integration or external state.
+ */
+export function multiSpringValue(
+  t: number,
+  v0: number,
+  events: SpringEvent[],
+  opts: MultiSpringOptions = {},
+): number {
+  const dur = opts.dur ?? 0;
+  const loop = opts.loop ?? "none";
+  let v = v0;
+  let i0 = 0;
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i];
+    if (e.set && e.t <= t) {
+      v = e.v ?? v;
+      i0 = i + 1;
+    }
+  }
+  for (let i = i0; i < events.length; i++) {
+    const e = events[i];
+    if (!e.set && e.sp) v += (e.d ?? 0) * springStep(t - e.t, e.sp);
+  }
+  if (dur > 0 && loop !== "none") {
+    let k = -1;
+    let firstSet = Infinity;
+    for (let i = 0; i < events.length; i++) {
+      if (events[i].set) {
+        k = i;
+        if (firstSet === Infinity) firstSet = events[i].t;
+      }
+    }
+    const tail = events.slice(k + 1).filter(e => !e.set && (e.d ?? 0) !== 0 && e.sp && e.t + settleOf(e.sp) > dur);
+    if (tail.length && t < firstSet) {
+      for (const e of tail) v += (e.d ?? 0) * (springStep(t + dur - e.t, e.sp as [number, number]) - 1);
+    }
+  }
+  return v;
+}
+
+/**
+ * Reactive signal tweening (motion-canvas spring generator pattern) adapted to a
+ * pure closed form: the value chases successive targets in `keyframes` with a
+ * damped spring per step. `sp` defaults to LAND `[0.72, 28]`.
+ */
+export function signalTweenValue(
+  t: number,
+  keyframes: Array<{ t: number; value: number; sp?: [number, number] }>,
+  opts: MultiSpringOptions & { sp?: [number, number] } = {},
+): number {
+  if (!keyframes.length) return 0;
+  const sp = opts.sp ?? [0.72, 28];
+  const v0 = keyframes[0].value;
+  const events: SpringEvent[] = [];
+  let prev = v0;
+  for (let i = 1; i < keyframes.length; i++) {
+    const kf = keyframes[i];
+    events.push({ t: kf.t, d: kf.value - prev, sp: kf.sp ?? sp });
+    prev = kf.value;
+  }
+  return multiSpringValue(t, v0, events, opts);
+}
+
+/** Deterministic mulberry32 PRNG (motion-craft `createSeededRandom`). Pure. */
+export function createSeededRandom(seed: string | number): () => number {
+  let a = 0;
+  if (typeof seed === "string") {
+    for (let i = 0; i < seed.length; i++) a = (a * 31 + seed.charCodeAt(i)) | 0;
+  } else {
+    a = seed | 0;
+  }
+  if (a === 0) a = 123456789;
+  return function mulberry32(): number {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Three integers -> [0,1), well mixed (core.js `hash`). */
+export function hashNoise(a: number, b = 0, c = 0): number {
+  let h = Math.imul((a | 0) ^ 0x3c6ef372, 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13) ^ (b | 0), 0xc2b2ae35);
+  h = Math.imul(h ^ (h >>> 16) ^ (c | 0), 0x27d4eb2f);
+  h ^= h >>> 15;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+
+/** Smooth seeded noise in [-1,1] that loops exactly over `dur` (core.js `loopNoise`). */
+export function loopNoise(t: number, n: number, seed: number, dur = 1): number {
+  const cyc = (cycles: number, phase: number): number => Math.PI * 2 * (cycles * t / dur + phase);
+  return (
+    Math.sin(cyc(n, hashNoise(seed, 1))) +
+    0.5 * Math.sin(cyc(2 * n + 1, hashNoise(seed, 2))) +
+    0.25 * Math.sin(cyc(4 * n + 3, hashNoise(seed, 3)))
+  ) / 1.75;
+}
+
+/* ------------------------------------------------------------------ *
+ * Compile-time easing + SVG morph/projection wrappers.
+ * These run in Node (bezier-easing / svg-path-commander) and emit pure data
+ * or pure expressions; the libraries are never injected into Cavalry.
+ * ------------------------------------------------------------------ */
+
+/** Cubic-bezier easing function via `bezier-easing` (Newton-Raphson solver). */
+export function cubicBezierEasing(x1: number, y1: number, x2: number, y2: number): (t: number) => number {
+  return Bezier(x1, y1, x2, y2);
+}
+
+/**
+ * Sample a cubic-bezier easing into `[t, eased]` pairs for baking pure keyframes.
+ * `handles` = `[x1, y1, x2, y2]`. Endpoints are exact (0 -> 0, 1 -> 1).
+ */
+export function sampleBezierEasing(handles: [number, number, number, number], steps = 24): Array<[number, number]> {
+  const ease = Bezier(handles[0], handles[1], handles[2], handles[3]);
+  const total = Math.max(2, Math.round(steps));
+  const out: Array<[number, number]> = [];
+  for (let i = 0; i <= total; i++) {
+    const t = i / total;
+    out.push([Math.round(t * 10000) / 10000, Math.round(ease(t) * 10000) / 10000]);
+  }
+  return out;
+}
+
+export interface MorphPaths {
+  from: string;
+  to: string;
+  segmentCount: number;
+}
+
+/**
+ * Equalize two SVG paths for morphing via `svg-path-commander.equalizePaths`:
+ * both outputs share the same segment count/command order so a per-segment
+ * interpolation is valid. Runs at compile time; returns plain path strings.
+ */
+export function equalizeMorphPaths(pathA: string, pathB: string, round: number | "off" = 4): MorphPaths {
+  const [a, b] = SVGPathCommander.equalizePaths(pathA, pathB);
+  return {
+    from: SVGPathCommander.pathToString(a, round),
+    to: SVGPathCommander.pathToString(b, round),
+    segmentCount: a.length,
+  };
+}
+
+/**
+ * Equalize two paths at the sub-segment level (`equalizeSegments`) for smoother
+ * morphs where curve subdivision matters more than command matching.
+ */
+export function equalizeMorphSegments(pathA: string, pathB: string, round: number | "off" = 4): MorphPaths {
+  const [a, b] = SVGPathCommander.equalizeSegments(pathA, pathB);
+  return {
+    from: SVGPathCommander.pathToString(a, round),
+    to: SVGPathCommander.pathToString(b, round),
+    segmentCount: a.length,
+  };
+}
+
+export interface Path3DTransform {
+  /** `[rx, ry, rz]` degrees, or a single Z rotation. */
+  rotate?: number | [number, number, number];
+  translate?: number | [number, number, number];
+  scale?: number | [number, number, number];
+  skew?: number | [number, number];
+  /** Transform origin `[x, y, z]`; z != 0 enables perspective projection. */
+  origin?: [number, number, number];
+  /** Convenience perspective distance (sets origin z). 0/undefined = orthographic. */
+  perspective?: number;
+}
+
+/**
+ * Project an SVG path through a 3D DOMMatrix (`svg-path-commander.transformPath`)
+ * with `[rx, ry, rz]` rotation. origin z (or `perspective`) selects orthographic
+ * (z = 0) vs perspective (z != 0) projection. Compile-time; returns a 2D path.
+ */
+export function projectPath3D(path: string, transform: Path3DTransform = {}, round: number | "off" = 4): string {
+  const origin: [number, number, number] = transform.origin
+    ? [transform.origin[0], transform.origin[1], transform.origin[2] ?? 0]
+    : [0, 0, 0];
+  if (transform.perspective != null) origin[2] = transform.perspective;
+  const spec: Record<string, unknown> = { origin };
+  if (transform.rotate != null) spec.rotate = transform.rotate;
+  if (transform.translate != null) spec.translate = transform.translate;
+  if (transform.scale != null) spec.scale = transform.scale;
+  if (transform.skew != null) spec.skew = transform.skew;
+  const out = SVGPathCommander.transformPath(path, spec);
+  return SVGPathCommander.pathToString(out, round);
 }

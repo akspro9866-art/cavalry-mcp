@@ -36,8 +36,9 @@ const _rb = {
   /**
    * Design-system colours used across the preset catalogue. When a theme is
    * active every literal from this table is retinted, so _mg.applyTheme reaches
-   * all 120 presets through the one colour funnel (_rb.c) without rewriting
-   * their scripts. With no theme the table is inert and rendering is identical.
+   * the whole preset catalogue through the one colour funnel (_rb.c) without
+   * rewriting their scripts. With no theme the table is inert and rendering is
+   * identical.
    */
   BASE_COLOR_ROLES: {
     "#10B981": "primary",
@@ -1161,9 +1162,493 @@ const _rb = {
       api.connect(noiseId, "id", dupId, "deformers");
     } catch (e) {}
     return { duplicator: dupId, source: base, effector: eff, falloff: falloffId, subMesh: subMeshId, noise: noiseId };
+  },
+
+  /* ------------------------------------------------------------------------
+   * Wave-2 Duik rigs. Math ported from Duik 20 automation / constraints:
+   *  - Wheel: rotation = degrees(distance / radius), signed by travel direction
+   *    (Duik/src/Scripts/ScriptUI Panels/inc/api/automation.jsx wheel()).
+   *  - Two-bone IK: law of cosines with pole flip and stretch reach clamp.
+   *  - Connector: remap range driving N weighted targets.
+   *  - Spring / Swing / Blink / Looper: Duik automation behaviours, baked as
+   *    deterministic closed-form samples (no state, no expression engine).
+   * Every builder runs with {} defaults and only uses verified node types.
+   * ---------------------------------------------------------------------- */
+
+  /** Duik connector remap: clamp (t) from [inMin,inMax] onto [outMin,outMax]. */
+  duikConnectorRemap(t, inMin, inMax, outMin, outMax, clamp) {
+    const a = inMin == null ? 0 : inMin, b = inMax == null ? 1 : inMax;
+    const span = (b - a) || 1e-6;
+    let u = (Number(t) - a) / span;
+    if (clamp !== false) u = Math.max(0, Math.min(1, u));
+    const lo = outMin == null ? 0 : outMin, hi = outMax == null ? 1 : outMax;
+    return lo + (hi - lo) * u;
+  },
+
+  /**
+   * Planar two-bone IK. Returns upper = absolute world angle of the first bone,
+   * lower = bend angle relative to the upper bone, both radians. Reach is
+   * clamped to [|l1-l2|, (l1+l2)*stretch]; clamp is reported, never silent.
+   */
+  duikTwoBoneAngles(x, y, l1, l2, pole, stretch) {
+    const L1 = Math.max(1e-4, Math.abs(Number(l1) || 0));
+    const L2 = Math.max(1e-4, Math.abs(Number(l2) || 0));
+    const dist = Math.sqrt(x * x + y * y);
+    const maxReach = (L1 + L2) * (stretch == null ? 1 : Math.max(1, Number(stretch)));
+    const minReach = Math.abs(L1 - L2) + 1e-4;
+    const d = Math.max(minReach, Math.min(maxReach, dist || minReach));
+    const clamped = Math.abs(d - dist) > 1e-6;
+    const cosA = (L1 * L1 + d * d - L2 * L2) / (2 * L1 * d);
+    const cosB = (L1 * L1 + L2 * L2 - d * d) / (2 * L1 * L2);
+    const a = Math.acos(Math.max(-1, Math.min(1, cosA)));
+    const b = Math.acos(Math.max(-1, Math.min(1, cosB)));
+    const base = Math.atan2(y, x);
+    const dir = pole == null || Number(pole) >= 0 ? 1 : -1;
+    const upper = base - dir * a;
+    const lower = dir * (Math.PI - b);
+    return {
+      reach: d,
+      distance: dist,
+      upper: upper,
+      lower: lower,
+      elbowX: Math.cos(upper) * L1,
+      elbowY: Math.sin(upper) * L1,
+      endX: Math.cos(base) * d,
+      endY: Math.sin(base) * d,
+      clamped: clamped
+    };
+  },
+
+  /** Duik wheel: signed rotation in degrees for a travelled distance and radius. */
+  duikWheelRotation(distance, radius) {
+    const r = Number(radius);
+    if (!r) return 0;
+    return (Number(distance) || 0) / r * 180 / Math.PI;
+  },
+
+  /** Duik Spring automation: damped sinusoid around 0, pure function of time. */
+  duikSpringValue(t, amplitude, frequency, decay) {
+    const tt = Math.max(0, Number(t) || 0);
+    return (amplitude == null ? 40 : Number(amplitude)) *
+      Math.exp(-(decay == null ? 2.5 : Number(decay)) * tt) *
+      Math.sin(Math.PI * 2 * (frequency == null ? 1.6 : Number(frequency)) * tt);
+  },
+
+  /** Duik Swing automation: undamped sine rotation, pure function of time. */
+  duikSwingValue(t, amplitude, frequency, phase) {
+    const tt = Math.max(0, Number(t) || 0);
+    return (amplitude == null ? 18 : Number(amplitude)) *
+      Math.sin(Math.PI * 2 * (frequency == null ? 0.8 : Number(frequency)) * tt + (phase || 0));
+  },
+
+  /** Duik Blink automation: 1 on even periods, 0 on odd, with optional soft edge. */
+  duikBlinkValue(frame, period, softness) {
+    const p = Math.max(1, period == null ? 12 : Number(period));
+    const phase = ((frame % (p * 2)) + p * 2) % (p * 2);
+    const s = softness == null ? 0 : Math.max(0.001, Number(softness));
+    if (phase < s) return 0.5 * phase / s;
+    if (phase < p - s) return 1;
+    if (phase < p + s) return 0.5 + 0.5 * (p - phase) / s;
+    if (phase < 2 * p - s) return 0;
+    return 0.5 * (phase - (2 * p - s)) / s;
+  },
+
+  /** Duik Looper: wrap time into [0, dur) for cycle loops, clamp for hold loops. */
+  duikLoopTime(t, dur, loop) {
+    const d = Math.max(1e-6, Number(dur) || 1);
+    if (loop === "hold") return Math.max(0, Math.min(d, t));
+    return ((t % d) + d) % d;
+  },
+
+  /* ------------------------------------------------------------------------
+   * Wave-2 3D card / world helpers (cat16). Pure orthographic/perspective
+   * projection of a point through rotateY -> rotateX -> roll, seeded geometry,
+   * and spherical helpers for Fibonacci lattices and airport-style arcs.
+   * ---------------------------------------------------------------------- */
+
+  /** Project a 3D point to 2D. o: { rotX, rotY, rotZ (deg), perspective, scale }. */
+  proj3D(x, y, z, o) {
+    o = o || {};
+    const d2r = Math.PI / 180;
+    const rx = (o.rotX || 0) * d2r, ry = (o.rotY || 0) * d2r, rz = (o.rotZ || 0) * d2r;
+    const cy = Math.cos(ry), sy = Math.sin(ry);
+    const x1 = x * cy + z * sy;
+    const z1 = -x * sy + z * cy;
+    const cx = Math.cos(rx), sx = Math.sin(rx);
+    const y1 = y * cx - z1 * sx;
+    const z2 = y * sx + z1 * cx;
+    const p = o.perspective == null ? 1400 : o.perspective;
+    const s = p <= 0 ? 1 : p / Math.max(1, p + z2);
+    const cr = Math.cos(rz), sr = Math.sin(rz);
+    const scale = (o.scale == null ? 1 : o.scale);
+    return {
+      x: (x1 * cr - y1 * sr) * s * scale,
+      y: (x1 * sr + y1 * cr) * s * scale,
+      scale: s * scale,
+      depth: z2
+    };
+  },
+
+  /** Deterministic integer mix -> [0,1); the only randomness presets may use. */
+  hash(a, b, c) {
+    let h = Math.imul((a | 0) ^ 0x3c6ef372, 0x85ebca6b);
+    h = Math.imul(h ^ (h >>> 13) ^ ((b || 0) | 0), 0xc2b2ae35);
+    h = Math.imul(h ^ (h >>> 16) ^ ((c || 0) | 0), 0x27d4eb2f);
+    h ^= h >>> 15; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16;
+    return (h >>> 0) / 4294967296;
+  },
+
+  /**
+   * Bake a sampled 3D path onto one layer: sample(frame, t) returns
+   * { x, y, scale, rotation, opacity, skewScaleX } (all optional). Every
+   * sample is keyframed linearly, so the motion is deterministic and pure.
+   */
+  bake3D(id, start, dur, step, sample) {
+    const frames = Math.max(1, Math.round(dur || 0));
+    const every = Math.max(1, Math.round(step || 3));
+    for (let f = 0; f <= frames; f += every) {
+      const s = sample(f, f / frames);
+      if (!s) continue;
+      if (s.x != null) this.kf(id, "position.x", [[start + f, s.x]], "Linear");
+      if (s.y != null) this.kf(id, "position.y", [[start + f, s.y]], "Linear");
+      if (s.scale != null) {
+        this.kf(id, "scale.x", [[start + f, s.scale * (s.skewScaleX == null ? 1 : s.skewScaleX)]], "Linear");
+        this.kf(id, "scale.y", [[start + f, s.scale]], "Linear");
+      }
+      if (s.rotation != null) this.kf(id, "rotation", [[start + f, s.rotation]], "Linear");
+      if (s.opacity != null) this.kf(id, "opacity", [[start + f, s.opacity]], "Linear");
+    }
+    return id;
+  },
+
+  /** Fibonacci lattice on a sphere: deterministic, evenly distributed points. */  fibonacciSphere(count, radius) {
+    const n = Math.max(1, Math.round(count || 30));
+    const r = radius == null ? 200 : radius;
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    const pts = [];
+    for (let i = 0; i < n; i++) {
+      const y = 1 - (i / (n - 1)) * 2;
+      const rr = Math.sqrt(Math.max(0, 1 - y * y));
+      const theta = golden * i;
+      pts.push({ x: Math.cos(theta) * rr * r, y: y * r, z: Math.sin(theta) * rr * r });
+    }
+    return pts;
+  },
+
+  /** Latitude/longitude (degrees) to a sphere point; y is up, lon 0 faces +z. */
+  latLon(lat, lon, radius) {
+    const r = radius == null ? 200 : radius;
+    const phi = (90 - lat) * Math.PI / 180;
+    const theta = (lon + 180) * Math.PI / 180;
+    return {
+      x: -r * Math.sin(phi) * Math.cos(theta),
+      y: r * Math.cos(phi),
+      z: r * Math.sin(phi) * Math.sin(theta)
+    };
+  },
+
+  /** Great-circle arc between two lat/lon points, slerp sampled to the given steps. */
+  greatCircle(a, b, steps, radius) {
+    const n = Math.max(2, Math.round(steps || 16));
+    const R = radius == null ? 200 : radius;
+    const toVec = (p) => {
+      const v = this.latLon(p[0], p[1], 1);
+      return v;
+    };
+    const v1 = toVec(a), v2 = toVec(b);
+    const dot = Math.max(-1, Math.min(1, v1.x * v2.x + v1.y * v2.y + v1.z * v2.z));
+    const omega = Math.acos(dot);
+    const sinO = Math.sin(omega) || 1e-6;
+    const pts = [];
+    for (let i = 0; i < n; i++) {
+      const t = i / (n - 1);
+      const k1 = Math.sin((1 - t) * omega) / sinO;
+      const k2 = Math.sin(t * omega) / sinO;
+      pts.push({
+        x: (v1.x * k1 + v2.x * k2) * R,
+        y: (v1.y * k1 + v2.y * k2) * R,
+        z: (v1.z * k1 + v2.z * k2) * R
+      });
+    }
+    return pts;
+  },
+
+  /**
+   * Duik-style Connector rig: one controller null is remapped onto N weighted
+   * target nulls; each target blends from its rest slot toward the controller
+   * with weight i/(N-1), so the controller travel drives the whole chain.
+   */
+  buildDuikConnectorRig(name, o) {
+    o = o || {};
+    const base = name || "Duik Connector";
+    const count = Math.max(2, Math.round(o.count || 5));
+    const ax = o.ax == null ? -420 : Number(o.ax);
+    const ay = o.ay == null ? 0 : Number(o.ay);
+    const bx = o.bx == null ? 420 : Number(o.bx);
+    const by = o.by == null ? 0 : Number(o.by);
+    const start = o.startFrame == null ? 0 : Number(o.startFrame);
+    const end = o.endFrame == null ? start + (o.duration == null ? 60 : Number(o.duration)) : Number(o.endFrame);
+    const ctrl = this.layer("null", base + " Controller", { position: [ax, ay] });
+    this.kf(ctrl, "position.x", [[start, ax], [end, bx]], o.ease || "SlowInSlowOut");
+    this.kf(ctrl, "position.y", [[start, ay], [end, by]], o.ease || "SlowInSlowOut");
+    const head = this.circle(base + " Head", (o.headSize || 20) / 2, { fill: o.color || "#38BDF8", x: ax, y: ay });
+    api.parent(head, ctrl);
+    const targets = [], rests = [], blends = [];
+    for (let i = 0; i < count; i++) {
+      const t = count === 1 ? 0 : i / (count - 1);
+      const tx = ax + (bx - ax) * t, ty = ay + (by - ay) * t;
+      const rest = this.layer("null", base + " Rest " + i, { position: [tx, ty] });
+      this.hide(rest);
+      const blend = this.layer("valueBlend", base + " Remap " + i, { weight: t * 100 });
+      try {
+        api.connect(rest, "position", blend, "a");
+        api.connect(ctrl, "position", blend, "b");
+      } catch (e) {}
+      const dot = this.circle(base + " Target " + i, (o.targetSize || 12) / 2, {
+        fill: o.targetColor || "#10B981", x: tx, y: ty
+      });
+      try { api.connect(blend, "id", dot, "position"); } catch (e) {}
+      targets.push(dot); rests.push(rest); blends.push(blend);
+    }
+    return { controller: ctrl, head: head, targets: targets, rests: rests, blends: blends, count: count };
+  },
+
+  /**
+   * Duik Two-Bone IK rig: root, upper/lower bone segments, joint dots and a
+   * goal null. Angles are solved at build time and baked every bakeStep frames,
+   * with reach clamped to the chain length.
+   */
+  buildDuikTwoBoneIK(name, o) {
+    o = o || {};
+    const base = name || "Duik IK";
+    const rootX = o.x == null ? 0 : Number(o.x);
+    const rootY = o.y == null ? 0 : Number(o.y);
+    const l1 = o.upperLength == null ? 170 : Number(o.upperLength);
+    const l2 = o.lowerLength == null ? 150 : Number(o.lowerLength);
+    const stretch = o.stretch == null ? 1 : Number(o.stretch);
+    const tx = o.tx == null ? 180 : Number(o.tx);
+    const ty = o.ty == null ? -120 : Number(o.ty);
+    const solve = this.duikTwoBoneAngles(tx, ty, l1, l2, o.pole, stretch);
+    const deg = 180 / Math.PI;
+    const root = this.layer("null", base + " Root", { position: [rootX, rootY] });
+    const upperRest = this.duikTwoBoneAngles(tx, ty, l1, l2, o.pole, stretch);
+    const upper = this.line(base + " Upper", rootX, rootY, rootX + l1, rootY, o.boneWidth || 20, o.color || "#10B981", {});
+    const elbowX = rootX + Math.cos(upperRest.upper) * l1;
+    const elbowY = rootY + Math.sin(upperRest.upper) * l1;
+    const lower = this.line(base + " Lower", elbowX, elbowY, elbowX + l2, elbowY, o.boneWidth || 20, o.color || "#10B981", {});
+    this.rot(lower, (upperRest.upper + upperRest.lower) * deg);
+    this.rot(upper, upperRest.upper * deg);
+    this.pos(upper, rootX, rootY);
+    const elbow = this.circle(base + " Elbow", (o.jointSize || 16) / 2, { fill: o.jointColor || "#F8FAFC", x: elbowX, y: elbowY });
+    const goal = this.circle(base + " Goal", (o.goalSize || 14) / 2, { fill: o.goalColor || "#F59E0B", x: rootX + solve.endX, y: rootY + solve.endY });
+    const start = o.startFrame == null ? 0 : Number(o.startFrame);
+    const dur = o.duration == null ? 60 : Number(o.duration);
+    const step = Math.max(2, Math.round(o.bakeStep || 5));
+    const fromX = o.fromX == null ? rootX + tx : Number(o.fromX);
+    const fromY = o.fromY == null ? rootY + ty : Number(o.fromY);
+    for (let f = 0; f <= dur; f += step) {
+      const u = f / dur;
+      const eased = u * u * (3 - 2 * u);
+      const px = fromX + (rootX + tx - fromX) * eased;
+      const py = fromY + (rootY + ty - fromY) * eased;
+      const s = this.duikTwoBoneAngles(px - rootX, py - rootY, l1, l2, o.pole, stretch);
+      const ex = rootX + s.elbowX, ey = rootY + s.elbowY;
+      this.kf(upper, "rotation", [[start + f, s.upper * deg]], "Linear");
+      this.kf(lower, "rotation", [[start + f, (s.upper + s.lower) * deg]], "Linear");
+      this.kf(lower, "position.x", [[start + f, ex]], "Linear");
+      this.kf(lower, "position.y", [[start + f, ey]], "Linear");
+      this.kf(elbow, "position.x", [[start + f, ex]], "Linear");
+      this.kf(elbow, "position.y", [[start + f, ey]], "Linear");
+      this.kf(goal, "position.x", [[start + f, px]], "Linear");
+      this.kf(goal, "position.y", [[start + f, py]], "Linear");
+    }
+    try { api.parent(upper, root); } catch (e) {}
+    return {
+      root: root, upper: upper, lower: lower, elbow: elbow, goal: goal,
+      angles: solve, clamped: solve.clamped, reach: solve.reach
+    };
+  },
+
+  /**
+   * Duik Automation rig: Spring | Swing | Wheel | Blink | Looper on one body.
+   * Every sample is closed form (pure of frame), so playback is deterministic.
+   */
+  buildDuikAutomationRig(name, o) {
+    o = o || {};
+    const base = name || "Duik Automation";
+    const kind = o.kind || "spring";
+    const start = o.startFrame == null ? 0 : Number(o.startFrame);
+    const dur = o.duration == null ? 60 : Number(o.duration);
+    const step = Math.max(1, Math.round(o.bakeStep || 3));
+    const samples = [];
+    let body;
+    if (kind === "wheel") {
+      body = this.circle(base + " Body", o.radius == null ? 90 : Number(o.radius), { fill: o.color || "#F59E0B", x: o.x || 0, y: o.y || 0 });
+      this.stroke(body, o.spokeColor || "#0B0C10", 4, { capStyle: 1, trim: [0, 100] });
+      const spoke = this.rect(base + " Spoke", 8, (o.radius == null ? 90 : Number(o.radius)) * 1.7, {
+        fill: o.spokeColor || "#0B0C10", radius: 4, x: o.x || 0, y: o.y || 0
+      });
+      api.parent(spoke, body);
+      const radius = o.radius == null ? 90 : Number(o.radius);
+      const travel = o.travel == null ? 640 : Number(o.travel);
+      for (let f = 0; f <= dur; f += step) {
+        const u = f / dur;
+        const dist = travel * u;
+        const rot = this.duikWheelRotation(dist, radius);
+        samples.push(rot);
+        this.kf(body, "rotation", [[start + f, rot]], "Linear");
+      }
+      return { body: body, spoke: spoke, kind: kind, samples: samples, radius: radius, travel: travel };
+    }
+    body = this.rect(base + " Body", o.width == null ? 140 : Number(o.width), o.height == null ? 96 : Number(o.height), {
+      fill: o.color || "#10B981", radius: o.radius == null ? 18 : Number(o.radius), x: o.x || 0, y: o.y || 0
+    });
+    if (kind === "swing") {
+      this.anchor(body, 0, -1);
+      this.pos(body, o.x || 0, (o.y || 0) + (o.height == null ? 96 : Number(o.height)) / 2);
+      for (let f = 0; f <= dur; f += step) {
+        const v = this.duikSwingValue(f / 30, o.amplitude == null ? 18 : Number(o.amplitude), o.frequency == null ? 0.8 : Number(o.frequency), o.phase);
+        samples.push(v);
+        this.kf(body, "rotation", [[start + f, v]], "Linear");
+      }
+      return { body: body, kind: kind, samples: samples };
+    }
+    if (kind === "blink") {
+      for (let f = 0; f <= dur; f += step) {
+        const v = this.duikBlinkValue(f, o.period == null ? 12 : Number(o.period), o.softness == null ? 2 : Number(o.softness));
+        samples.push(v);
+        this.kf(body, "opacity", [[start + f, v * 100]], "Linear");
+      }
+      return { body: body, kind: kind, samples: samples, period: o.period == null ? 12 : Number(o.period) };
+    }
+    if (kind === "looper") {
+      const turns = o.turns == null ? 1 : Number(o.turns);
+      for (let f = 0; f <= dur; f += step) {
+        const v = this.duikLoopTime(f, dur, "cycle") / dur * 360 * turns;
+        samples.push(v);
+        this.kf(body, "rotation", [[start + f, v]], "Linear");
+      }
+      return { body: body, kind: kind, samples: samples, turns: turns };
+    }
+    const amp = o.amplitude == null ? 40 : Number(o.amplitude);
+    const freq = o.frequency == null ? 1.6 : Number(o.frequency);
+    const decay = o.decay == null ? 2.5 : Number(o.decay);
+    for (let f = 0; f <= dur; f += step) {
+      const v = this.duikSpringValue(f / 30, amp, freq, decay);
+      samples.push(v);
+      this.kf(body, "position.y", [[start + f, (o.y || 0) + v]], "Linear");
+      this.kf(body, "scale.y", [[start + f, 1 + v / Math.max(1, amp) * 0.18]], "Linear");
+    }
+    return { body: body, kind: kind, samples: samples, amplitude: amp };
+  },
+
+  /**
+   * Duik 2D camera rig: truck / pedestal / zoom / dutch controllers plus seeded
+   * handheld shake on a parent null. All motion is keyframed and deterministic.
+   */
+  buildDuik2DCameraRig(name, o) {
+    o = o || {};
+    const base = name || "Duik Camera";
+    const start = o.startFrame == null ? 0 : Number(o.startFrame);
+    const dur = o.duration == null ? 60 : Number(o.duration);
+    const shake = this.layer("null", base + " Shake", { position: [0, 0] });
+    const noiseX = this.layer("noise", base + " Shake X", {
+      strength: o.shake == null ? 6 : Number(o.shake),
+      "generator.frequency": o.shakeFrequency == null ? 0.8 : Number(o.shakeFrequency),
+      "generator.seed": o.seed == null ? 7 : Number(o.seed)
+    });
+    const noiseY = this.layer("noise", base + " Shake Y", {
+      strength: o.shake == null ? 6 : Number(o.shake),
+      "generator.frequency": (o.shakeFrequency == null ? 0.8 : Number(o.shakeFrequency)) * 1.17,
+      "generator.seed": (o.seed == null ? 7 : Number(o.seed)) + 13
+    });
+    try {
+      api.connect(noiseX, "id", shake, "position.x");
+      api.connect(noiseY, "id", shake, "position.y");
+    } catch (e) {}
+    const cam = this.layer("null", base + " Camera", { position: [0, 0] });
+    try { api.parent(cam, shake); } catch (e) {}
+    const truck = this.layer("null", base + " Truck", { position: [0, 0] });
+    const pedestal = this.layer("null", base + " Pedestal", { position: [0, 0] });
+    const zoom = this.layer("null", base + " Zoom", { position: [0, 0] });
+    const dutch = this.layer("null", base + " Dutch", { position: [0, 0] });
+    const tx = o.truck == null ? 160 : Number(o.truck);
+    const py = o.pedestal == null ? 60 : Number(o.pedestal);
+    const z = o.zoom == null ? 1.22 : Number(o.zoom);
+    const dz = o.dutch == null ? 3 : Number(o.dutch);
+    this.kf(truck, "position.x", [[start, 0], [start + dur, tx]], o.ease || "SlowInSlowOut");
+    this.kf(pedestal, "position.y", [[start, 0], [start + dur, py]], o.ease || "SlowInSlowOut");
+    this.kf(zoom, "scale.x", [[start, 1], [start + dur, z]], o.ease || "SlowInSlowOut");
+    this.kf(zoom, "scale.y", [[start, 1], [start + dur, z]], o.ease || "SlowInSlowOut");
+    this.kf(dutch, "rotation", [[start, 0], [start + dur, dz]], o.ease || "SlowInSlowOut");
+    this.kf(cam, "position.x", [[start, 0], [start + dur, tx]], o.ease || "SlowInSlowOut");
+    this.kf(cam, "position.y", [[start, 0], [start + dur, py]], o.ease || "SlowInSlowOut");
+    this.kf(cam, "scale.x", [[start, 1], [start + dur, z]], o.ease || "SlowInSlowOut");
+    this.kf(cam, "scale.y", [[start, 1], [start + dur, z]], o.ease || "SlowInSlowOut");
+    this.kf(cam, "rotation", [[start, 0], [start + dur, dz]], o.ease || "SlowInSlowOut");
+    const frame = this.rect(base + " Frame", o.frameWidth == null ? 760 : Number(o.frameWidth), o.frameHeight == null ? 420 : Number(o.frameHeight), {
+      fill: o.frameColor || "#0F172A", radius: 24, x: 0, y: 0, stroke: true, strokeColor: "#27303F", strokeWidth: 2
+    });
+    try { api.parent(frame, cam); } catch (e) {}
+    return {
+      camera: cam, shake: shake, shakeX: noiseX, shakeY: noiseY,
+      truck: truck, pedestal: pedestal, zoom: zoom, dutch: dutch, frame: frame
+    };
   }
 };
 `;
+
+/** Duik maths mirrored for Node-side validation (same formulas as _rb). */
+export function duikConnectorRemap(t: number, inMin = 0, inMax = 1, outMin = 0, outMax = 1, clamp = true): number {
+  const span = (inMax - inMin) || 1e-6;
+  let u = (Number(t) - inMin) / span;
+  if (clamp) u = Math.max(0, Math.min(1, u));
+  return outMin + (outMax - outMin) * u;
+}
+
+export function duikTwoBoneAngles(
+  x: number,
+  y: number,
+  l1: number,
+  l2: number,
+  pole = 1,
+  stretch = 1,
+): { reach: number; upper: number; lower: number; endX: number; endY: number; clamped: boolean } {
+  const L1 = Math.max(1e-4, Math.abs(l1));
+  const L2 = Math.max(1e-4, Math.abs(l2));
+  const dist = Math.sqrt(x * x + y * y);
+  const maxReach = (L1 + L2) * Math.max(1, stretch);
+  const minReach = Math.abs(L1 - L2) + 1e-4;
+  const d = Math.max(minReach, Math.min(maxReach, dist || minReach));
+  const clamped = Math.abs(d - dist) > 1e-6;
+  const a = Math.acos(Math.max(-1, Math.min(1, (L1 * L1 + d * d - L2 * L2) / (2 * L1 * d))));
+  const base = Math.atan2(y, x);
+  const dir = pole >= 0 ? 1 : -1;
+  return {
+    reach: d,
+    upper: base - dir * a,
+    lower: dir * (Math.PI - Math.acos(Math.max(-1, Math.min(1, (L1 * L1 + L2 * L2 - d * d) / (2 * L1 * L2))))),
+    endX: Math.cos(base) * d,
+    endY: Math.sin(base) * d,
+    clamped,
+  };
+}
+
+export function duikWheelRotation(distance: number, radius: number): number {
+  if (!radius) return 0;
+  return (distance / radius) * 180 / Math.PI;
+}
+
+export function duikSpringValue(t: number, amplitude = 40, frequency = 1.6, decay = 2.5): number {
+  const tt = Math.max(0, t);
+  return amplitude * Math.exp(-decay * tt) * Math.sin(Math.PI * 2 * frequency * tt);
+}
+
+export function duikSpringSamples(durationFrames: number, fps = 30, step = 3, amplitude = 40, frequency = 1.6, decay = 2.5): number[] {
+  const out: number[] = [];
+  for (let f = 0; f <= durationFrames; f += step) out.push(duikSpringValue(f / fps, amplitude, frequency, decay));
+  return out;
+}
 
 export interface ControllerBindingSpec {
   name: string;
@@ -1215,5 +1700,25 @@ export function buildProximityFieldDuplicator(
   opts: Record<string, unknown> = {},
 ): string {
   return `_rb.buildProximityFieldDuplicator(${JSON.stringify(name)}, ${JSON.stringify(sourceId)}, ${JSON.stringify(effectorId)}, ${JSON.stringify(opts)})`;
+}
+
+/** Duik connector rig expression (one controller remapped onto N targets). */
+export function buildDuikConnectorRig(name: string, opts: Record<string, unknown> = {}): string {
+  return `_rb.buildDuikConnectorRig(${JSON.stringify(name)}, ${JSON.stringify(opts)})`;
+}
+
+/** Duik two-bone IK rig expression (law of cosines, reach clamped). */
+export function buildDuikTwoBoneIK(name: string, opts: Record<string, unknown> = {}): string {
+  return `_rb.buildDuikTwoBoneIK(${JSON.stringify(name)}, ${JSON.stringify(opts)})`;
+}
+
+/** Duik automation rig expression (kind: spring | swing | wheel | blink | looper). */
+export function buildDuikAutomationRig(name: string, opts: Record<string, unknown> = {}): string {
+  return `_rb.buildDuikAutomationRig(${JSON.stringify(name)}, ${JSON.stringify(opts)})`;
+}
+
+/** Duik 2D camera rig expression (truck / pedestal / zoom / dutch + shake). */
+export function buildDuik2DCameraRig(name: string, opts: Record<string, unknown> = {}): string {
+  return `_rb.buildDuik2DCameraRig(${JSON.stringify(name)}, ${JSON.stringify(opts)})`;
 }
 
