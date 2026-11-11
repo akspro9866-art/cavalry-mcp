@@ -112,7 +112,7 @@ if (existingAgents.includes(startMarker) && existingAgents.includes(endMarker)) 
   nextAgents = `${existingAgents.trimEnd()}\n\n${catalogSection}\n`;
 }
 
-writeFileSync(agentsPath, nextAgents, "utf8");
+writeFileSync(agentsPath, nextAgents.replace(/\r\n/g, "\n"), "utf8");
 
 console.log(
   `[preset-docs] generated ${PRESET_DEFS.length} lazy .doc.mjs files (max ${maxTokens} tokens <= 110 cap) and updated AGENTS.md`,

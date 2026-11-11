@@ -3,7 +3,6 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { registerCompactTools } from "./server/compact-tools.js";
 import { registerCoreTools } from "./server/core-tools.js";
-import { registerLegacyTools } from "./server/legacy/index.js";
 import { registerStrictTools } from "./server/strict-tools.js";
 import { loadRefcloneModule, registerRefcloneTools, type RefcloneToolDependencies } from "./server/refclone-tools.js";
 import { compilePreset, PRESET_NAMES } from "./presets/cavalry_snippets.js";
@@ -52,9 +51,10 @@ export function createServer({ env = process.env, argv = process.argv, refclone 
   }
 
   // Compatibility caveat: unset MCP_MODE still honors the older opt-ins.
-  // interactive_authoring explicitly enables BOTH CRUD and granular tools.
-  const legacyTools = interactive || env.ENABLE_LEGACY_TOOLS === "true";
-  const legacyCrud = legacyTools || env.CAVALRY_MCP_LEGACY_CRUD === "1" || env.CAVALRY_MCP_LEGACY_CRUD === "true";
+  // Legacy pre-v3.4 granular per-attribute tools were removed; interactive_authoring
+  // enables CRUD core tools alongside the compact surface.
+  const legacyCrud =
+    interactive || env.CAVALRY_MCP_LEGACY_CRUD === "1" || env.CAVALRY_MCP_LEGACY_CRUD === "true";
   if (legacyCrud) {
   server.tool(
     "cavalry_run_script",
@@ -91,7 +91,6 @@ export function createServer({ env = process.env, argv = process.argv, refclone 
   }
   // Unset mode and no opt-ins preserve the existing compact three-tool default.
   registerCompactTools(server);
-  if (legacyTools) registerLegacyTools(server);
   return server;
 }
 

@@ -11,11 +11,11 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { executeMotionScript } from "../runtime/execute.js";
 import { wrapAtomicUndo } from "../dsl/undo-wrapper.js";
 
-export const ExecuteInputSchema = z.object({
+export const ExecuteInputSchema = z.strictObject({
   code: z.string().min(1).max(1000000).describe("JavaScript code body to execute in Cavalry"),
-  groupName: z.string().min(1).max(128).default("mcp_atomic_batch").describe("Undo group label"),
-  seq: z.union([z.string().max(64), z.number()]).optional().describe("Caller sequence identifier"),
-}).strict();
+  groupName: z.string().min(1).max(128).default("mcp_atomic_batch").describe("Undo group label for atomic batch rollback"),
+  seq: z.union([z.string().min(1).max(64), z.number().finite()]).optional().describe("Caller sequence identifier"),
+});
 
 export type ExecuteInput = z.infer<typeof ExecuteInputSchema>;
 
@@ -37,10 +37,12 @@ export async function handleExecute(input: ExecuteInput) {
 }
 
 export function registerExecuteTool(server: McpServer): void {
-  server.tool(
+  server.registerTool(
     "cavalry_execute",
-    "Atomically compile and execute an _mg motion script in Cavalry wrapped in an undo group.",
-    ExecuteInputSchema.shape,
+    {
+      description: "Atomically compile and execute an _mg motion script in Cavalry wrapped in an undo group.",
+      inputSchema: ExecuteInputSchema,
+    },
     async (args) => {
       const parsed = ExecuteInputSchema.parse(args);
       return handleExecute(parsed);

@@ -9,3 +9,4 @@ tmp-*
 tmp-live-*
 # Generated cloned-style preview renders (smoke tests, live instantiate calls).
 .cloned-renders/
+coverage/

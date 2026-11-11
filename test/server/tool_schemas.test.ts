@@ -3,22 +3,22 @@ import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { registerLegacyTools } from "../../src/server/legacy/index.js";
 import { registerCoreTools } from "../../src/server/core-tools.js";
 import { registerCompactTools } from "../../src/server/compact-tools.js";
+import { registerCoreTools as registerV34CoreTools } from "../../src/tools/index.js";
 import { z } from "zod";
 import { PRESET_NAMES } from "../../src/presets/cavalry_snippets.js";
 
 /**
  * The published schemas are the strictness boundary, so this walks the *real*
  * registrars over an in-memory transport — including nested arrays, records
- * and enums — rather than trusting source grep. The default surface must be
- * EXACTLY the three compact tools; the legacy surface (CAVALRY_MCP_LEGACY_CRUD)
- * adds the promoted trio, the core five and the historical per-attribute set.
+ * and enums — rather than trusting source grep. The default surface is the
+ * compact surface; CAVALRY_MCP_LEGACY_CRUD adds the promoted trio and the five
+ * CRUD core tools (pre-v3.4 granular per-attribute tools have been removed).
  */
-function buildServer(legacy: boolean): McpServer {
-  const server = new McpServer({ name: `cavalry-mcp-schema-test-${legacy}`, version: "0.0.0" });
-  if (legacy) {
+function buildServer(crud: boolean): McpServer {
+  const server = new McpServer({ name: `cavalry-mcp-schema-test-${crud}`, version: "0.0.0" });
+  if (crud) {
     // Mirror the three promoted index tools with their real schemas (they are
     // registered inline in src/index.js, which would connect to stdio here).
     server.tool(
@@ -49,7 +49,6 @@ function buildServer(legacy: boolean): McpServer {
     registerCoreTools(server);
   }
   registerCompactTools(server);
-  if (legacy) registerLegacyTools(server);
   return server;
 }
 
@@ -108,21 +107,23 @@ const COMPACT_TOOLS = [
   "sync_active_comp_to_cloned_style",
 ];
 
-for (const legacy of [false, true]) {
-  test(`${legacy ? "full" : "default"} MCP surface publishes strict, fully described input schemas`, async () => {
-    const { tools, close } = await publishedTools(legacy);
+for (const crud of [false, true]) {
+  test(`${crud ? "crud" : "default"} MCP surface publishes strict, fully described input schemas`, async () => {
+    const { tools, close } = await publishedTools(crud);
     try {
       // Default = the three compact tools plus the three cloned-style tools,
-      // exactly. Legacy adds the promoted trio, the five core tools and the
-      // per-attribute legacy set.
-      assert.equal(tools.length, legacy ? 58 : 6);
-      if (!legacy) {
+      // exactly. CRUD adds the promoted trio and the five core tools (14 total).
+      assert.equal(tools.length, crud ? 14 : 6);
+      if (!crud) {
         assert.deepEqual(tools.map(tool => tool.name).sort(), COMPACT_TOOLS.slice().sort());
       }
       const problems: string[] = [];
       for (const tool of tools) {
         assert.ok((tool.description ?? "").trim().length > 20, `${tool.name} has no useful tool description`);
         assert.equal(tool.inputSchema.type, "object", `${tool.name} input schema must be an object`);
+        if (["cavalry_apply_dsl", "cavalry_search_presets", "cavalry_inspect_compact"].includes(tool.name)) {
+          assert.equal((tool.inputSchema as JsonSchema).additionalProperties, false, `${tool.name} must publish additionalProperties: false`);
+        }
         assertDescribed(tool.inputSchema as JsonSchema, tool.name, problems);
       }
       assert.deepEqual(problems, [], `undescribed parameters: ${problems.join(", ")}`);
@@ -135,12 +136,37 @@ for (const legacy of [false, true]) {
         fetchRejection(tools, "cavalry_verify_frames", { frames: 42 }),
         fetchRejection(tools, "cavalry_apply_dsl", { presets: new Array(9).fill({ id: "bento_cards" }) }),
       ]);
-      assert.deepEqual(failures, legacy ? [true, true, true] : [false, false, true]);
+      assert.deepEqual(failures, crud ? [true, true, true] : [false, false, true]);
     } finally {
       await close();
     }
   });
 }
+
+test("v3.4 3-tool core surface publishes additionalProperties: false and strict descriptions", async () => {
+  const server = new McpServer({ name: "v34-core-schema-test", version: "3.4.0" });
+  registerV34CoreTools(server);
+  const [clientToServer, serverToClient] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverToClient);
+  const client = new Client({ name: "v34-schema-client", version: "0.0.0" });
+  await client.connect(clientToServer);
+  try {
+    const tools = (await client.listTools()).tools;
+    assert.deepEqual(tools.map(t => t.name).sort(), ["cavalry_execute", "cavalry_inspect", "cavalry_presets"]);
+    const problems: string[] = [];
+    for (const tool of tools) {
+      const schema = tool.inputSchema as JsonSchema;
+      assert.equal(schema.type, "object");
+      assert.equal(schema.additionalProperties, false, `${tool.name} must forbid extra properties`);
+      assert.ok(Array.isArray(schema.required) && schema.required.length > 0, `${tool.name} must have explicit required array`);
+      assertDescribed(schema, tool.name, problems);
+    }
+    assert.deepEqual(problems, [], `undescribed parameters: ${problems.join(", ")}`);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
 
 /** Use the client-backed surface to validate by calling an intentionally bad arg. */
 async function fetchRejection(tools: Awaited<ReturnType<typeof publishedTools>>["tools"], name: string, args: Record<string, unknown>): Promise<boolean> {

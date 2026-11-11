@@ -9,11 +9,11 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { runBatchInspect } from "../bridge/stallion.js";
 
-export const InspectInputSchema = z.object({
-  mode: z.enum(["selection", "roots", "all"]).default("selection").describe("Target scope to inspect"),
+export const InspectInputSchema = z.strictObject({
+  mode: z.enum(["selection", "roots", "all"]).describe("Target scope to inspect in the active composition"),
   sampleFrames: z.array(z.number().int().min(0).max(100000)).max(64).optional().describe("Specific frames to sample (max 64)"),
   sampleIds: z.array(z.string().min(1).max(80)).max(200).optional().describe("Layer ids to inspect (max 200)"),
-}).strict();
+});
 
 export type InspectInput = z.infer<typeof InspectInputSchema>;
 
@@ -37,10 +37,12 @@ export async function handleInspect(input: InspectInput) {
 }
 
 export function registerInspectTool(server: McpServer): void {
-  server.tool(
+  server.registerTool(
     "cavalry_inspect",
-    "Inspect compact layer summaries and bounding box geometry across sample frames.",
-    InspectInputSchema.shape,
+    {
+      description: "Inspect compact layer summaries and bounding box geometry across sample frames.",
+      inputSchema: InspectInputSchema,
+    },
     async (args) => {
       const parsed = InspectInputSchema.parse(args);
       return handleInspect(parsed);

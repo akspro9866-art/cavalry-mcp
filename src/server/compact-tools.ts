@@ -94,27 +94,30 @@ export function registerCompactTools(server: McpServer): void {
   // -------------------------------------------------------------------------
   // cavalry_apply_dsl — one atomic build+verify round trip
   // -------------------------------------------------------------------------
-  server.tool(
+  server.registerTool(
     "cavalry_apply_dsl",
-    "Build and verify a scene in one atomic round trip: a declarative _mg manifest plus optional preset invocations, executed via /batch-step. Returns compact DOM TSV, per-frame bounding boxes and a diff summary. No raw Cavalry JS.",
     {
-      manifest: z.record(z.string(), z.unknown()).optional().describe('Declarative _mg manifest: { comp?: {width,height,fps,endFrame,bg}, layers?: [{as, kind: "shape"|"layer"|"text"|"svg"|"image", ...}], ops?: [{op: "set"|"keyframe"|"easing"|"connect"|"expression"|"delete"|"order"|"fit", ...}] }. Later ops address created layers as "$name".'),
-      presets: z
-        .array(
-          z.object({
-            id: z.string().describe("Preset id from the library (aliases accepted; discover ids with cavalry_search_presets)."),
-            params: z.record(z.string(), z.unknown()).optional().describe("Preset parameters keyed by the preset's declared parameter names."),
-          }).describe("One preset invocation applied before the manifest."),
-        )
-        .max(8)
-        .optional()
-        .describe("Preset invocations applied before the manifest; their tracked roots are aliased as $<presetId>_<key>. Use cavalry_search_presets to find ids."),
-      script: z.string().optional().describe("Optional raw JS body executed after presets and before the manifest (escape hatch; _mg/_rb are preloaded)."),
-      sampleFrames: z.array(z.number().int()).max(64).optional().describe("Frames to sample after execution (max 64); each returns world-space bounding boxes. Default [0]."),
-      queryLayers: z.array(z.string()).max(200).optional().describe("Layer ids/aliases ($name) to measure. Default: all layers."),
-      renderFrames: z.boolean().optional().describe("Render a PNG per sampled frame."),
-      renderOutputDir: z.string().optional().describe("Directory for rendered PNGs (forward slashes)."),
-      comp: z.string().optional().describe("Comp id to activate for the call (restored afterwards)."),
+      description:
+        "Build and verify a scene in one atomic round trip: a declarative _mg manifest plus optional preset invocations, executed via /batch-step. Returns compact DOM TSV, per-frame bounding boxes and a diff summary. No raw Cavalry JS.",
+      inputSchema: z.strictObject({
+        manifest: z.record(z.string().max(128), z.unknown()).optional().describe('Declarative _mg manifest: { comp?: {width,height,fps,endFrame,bg}, layers?: [{as, kind: "shape"|"layer"|"text"|"svg"|"image", ...}], ops?: [{op: "set"|"keyframe"|"easing"|"connect"|"expression"|"delete"|"order"|"fit", ...}] }. Later ops address created layers as "$name".'),
+        presets: z
+          .array(
+            z.strictObject({
+              id: z.string().max(128).describe("Preset id from the library (aliases accepted; discover ids with cavalry_search_presets)."),
+              params: z.record(z.string().max(128), z.unknown()).optional().describe("Preset parameters keyed by the preset's declared parameter names."),
+            }).describe("One preset invocation applied before the manifest."),
+          )
+          .max(8)
+          .optional()
+          .describe("Preset invocations applied before the manifest; their tracked roots are aliased as $<presetId>_<key>. Use cavalry_search_presets to find ids."),
+        script: z.string().max(65536).optional().describe("Optional raw JS body executed after presets and before the manifest (escape hatch; _mg/_rb are preloaded)."),
+        sampleFrames: z.array(z.number().int()).max(64).optional().describe("Frames to sample after execution (max 64); each returns world-space bounding boxes. Default [0]."),
+        queryLayers: z.array(z.string().max(128)).max(200).optional().describe("Layer ids/aliases ($name) to measure. Default: all layers."),
+        renderFrames: z.boolean().optional().describe("Render a PNG per sampled frame."),
+        renderOutputDir: z.string().max(512).optional().describe("Directory for rendered PNGs (forward slashes)."),
+        comp: z.string().max(128).optional().describe("Comp id to activate for the call (restored afterwards)."),
+      }),
     },
     async args => {
       try {
@@ -155,13 +158,16 @@ export function registerCompactTools(server: McpServer): void {
   // -------------------------------------------------------------------------
   // cavalry_search_presets — bounded catalog discovery
   // -------------------------------------------------------------------------
-  server.tool(
+  server.registerTool(
     "cavalry_search_presets",
-    "Search the 120-preset procedural library by keyword, motion tag (pop/slide/stagger/count/wave/…) or easing family (spring/overshoot/linear), or resolve an exact presetId from the compact index without loading all 120 full schemas.",
     {
-      query: z.string().optional().describe('Space-separated keywords; every word must match (AND). Examples: "counter", "card spring", "progress bar".'),
-      category: z.string().optional().describe("Category filter: id (typography), index (1-14) or label fragment (e.g. \"fintech\")."),
-      presetId: z.string().optional().describe("Exact preset id or alias to resolve lazily from the compact index without loading all 120 schemas."),
+      description:
+        "Search the 120-preset procedural library by keyword, motion tag (pop/slide/stagger/count/wave/…) or easing family (spring/overshoot/linear), or resolve an exact presetId from the compact index without loading all 120 full schemas.",
+      inputSchema: z.strictObject({
+        query: z.string().max(256).optional().describe('Space-separated keywords; every word must match (AND). Examples: "counter", "card spring", "progress bar".'),
+        category: z.string().max(128).optional().describe("Category filter: id (typography), index (1-14) or label fragment (e.g. \"fintech\")."),
+        presetId: z.string().max(128).optional().describe("Exact preset id or alias to resolve lazily from the compact index without loading all 120 schemas."),
+      }),
     },
     async args => {
       try {
@@ -196,16 +202,19 @@ export function registerCompactTools(server: McpServer): void {
   // -------------------------------------------------------------------------
   // cavalry_inspect_compact — strict-TSV scene inspection
   // -------------------------------------------------------------------------
-  server.tool(
+  server.registerTool(
     "cavalry_inspect_compact",
-    "Inspect the live scene as strict TSV (id\\ttype\\tparent\\tname\\tx,y,w,h\\tanimAttrs\\tconnections), one line per layer — the token-compact replacement for JSON DOM dumps. Pass sampleFrames to also evaluate per-frame world-space bounding boxes.",
     {
-      sampleFrames: z.array(z.number().int()).max(64).optional().describe("Frames to evaluate (max 64); adds per-frame geometry. The playhead is restored."),
-      queryLayers: z.array(z.string()).max(200).optional().describe("Layer ids to inspect (max 200). Default: every layer in the active comp."),
-      attrs: z.array(z.string()).max(40).optional().describe("Attribute paths to include as animAttr cells (default: animated + connected attributes only)."),
-      limit: z.number().int().min(1).max(1000).optional().describe("Max layers per call (default 200)."),
-      offset: z.number().int().min(0).optional().describe("Layer list offset for pagination."),
-      comp: z.string().optional().describe("Comp id (default: active comp)."),
+      description:
+        "Inspect the live scene as strict TSV (id\\ttype\\tparent\\tname\\tx,y,w,h\\tanimAttrs\\tconnections), one line per layer — the token-compact replacement for JSON DOM dumps. Pass sampleFrames to also evaluate per-frame world-space bounding boxes.",
+      inputSchema: z.strictObject({
+        sampleFrames: z.array(z.number().int()).max(64).optional().describe("Frames to evaluate (max 64); adds per-frame geometry. The playhead is restored."),
+        queryLayers: z.array(z.string().max(128)).max(200).optional().describe("Layer ids to inspect (max 200). Default: every layer in the active comp."),
+        attrs: z.array(z.string().max(128)).max(40).optional().describe("Attribute paths to include as animAttr cells (default: animated + connected attributes only)."),
+        limit: z.number().int().min(1).max(1000).optional().describe("Max layers per call (default 200)."),
+        offset: z.number().int().min(0).optional().describe("Layer list offset for pagination."),
+        comp: z.string().max(128).optional().describe("Comp id (default: active comp)."),
+      }),
     },
     async args => {
       try {

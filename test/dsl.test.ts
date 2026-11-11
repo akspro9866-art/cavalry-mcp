@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { wrapAtomicUndo } from "../src/dsl/undo-wrapper.js";
 import { createMgRuntimeSource } from "../src/dsl/mg-runtime.js";
 import { applyMgPatch, compileMgBatch, validateSceneSpecV2 } from "../src/lib/index.js";
+import { buildMockApi, createMockApiState, executeInMock } from "./helpers/mock-cavalry-api.js";
 
 describe("cavalry-mcp: dsl and schema tests", () => {
   test("wrapAtomicUndo wraps body in IIFE with try/finally cavalry.endUndoGroup()", () => {
@@ -67,5 +68,68 @@ describe("cavalry-mcp: dsl and schema tests", () => {
     assert.ok(compiled.includes('cavalry.beginUndoGroup("batch_hero");'));
     assert.ok(compiled.includes('_mg.patch("hero"'));
     assert.ok(compiled.includes('cavalry.endUndoGroup();'));
+  });
+
+  test("wrapAtomicUndo calls endUndoGroup in finally when body throws", () => {
+    const state = createMockApiState();
+    const api = buildMockApi(state);
+    const undoEvents: string[] = [];
+    const cavalry = {
+      beginUndoGroup: (name: string) => undoEvents.push(`begin:${name}`),
+      endUndoGroup: () => undoEvents.push("end"),
+    };
+    const wrapped = wrapAtomicUndo('throw new Error("intentional failure");', "err_group");
+    assert.throws(() => executeInMock(wrapped, api, { cavalry }), /intentional failure/);
+    assert.deepEqual(undoEvents, ["begin:err_group", "end"]);
+  });
+
+  test("compileMgBatch executes idempotently across repeated runs without duplicating nodes", () => {
+    const state = createMockApiState();
+    state.layers.clear();
+    const api = buildMockApi(state);
+    const undoEvents: string[] = [];
+    const cavalry = {
+      beginUndoGroup: (name: string) => undoEvents.push(`begin:${name}`),
+      endUndoGroup: () => undoEvents.push("end"),
+    };
+
+    const spec = {
+      version: "2.0" as const,
+      resolution: [1920, 1080] as [number, number],
+      fps: 60,
+      layers: [
+        { id: "src_null", type: "null", name: "DriverNull" },
+        {
+          id: "card_1",
+          type: "rectangle",
+          name: "HeroCard",
+          attrs: { "position.x": 100 },
+          keyframes: {
+            "position.x": [
+              { frame: 0, value: 0 },
+              { frame: 30, value: 100, easing: "SlowOut" },
+            ],
+          },
+          connections: [{ attrPath: "opacity", from: "DriverNull.id" }],
+        },
+      ],
+    };
+
+    const script = compileMgBatch(spec, { groupName: "idem_batch" });
+    executeInMock(script, api, { cavalry });
+    const countAfterFirst = state.layers.size;
+    const kfAfterFirst = state.keyframes.length;
+    const connAfterFirst = state.connections.length;
+
+    assert.equal(countAfterFirst, 2);
+    assert.equal(kfAfterFirst, 2);
+    assert.equal(connAfterFirst, 1);
+
+    // Second identical batch run must reuse existing layers and avoid duplicating keyframes/connections
+    executeInMock(script, api, { cavalry });
+    assert.equal(state.layers.size, countAfterFirst);
+    assert.equal(state.keyframes.length, kfAfterFirst);
+    assert.equal(state.connections.length, connAfterFirst);
+    assert.deepEqual(undoEvents, ["begin:idem_batch", "end", "begin:idem_batch", "end"]);
   });
 });

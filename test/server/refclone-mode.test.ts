@@ -18,19 +18,6 @@ const CRUD = [
   ...COMPACT, "cavalry_run_script", "cavalry_inspect", "cavalry_run_preset", "cavalry_batch",
   "cavalry_verify_frames", "cavalry_render_frames", "cavalry_probe_api", "cavalry_doctor",
 ].sort();
-const FULL = [
-  ...CRUD, "cavalry_ping", "cavalry_create_layer", "cavalry_set_attribute", "cavalry_get_attribute",
-  "cavalry_connect", "cavalry_keyframe", "cavalry_magic_easing", "cavalry_get_keyframes",
-  "cavalry_animate_in", "cavalry_get_scene_layers", "cavalry_get_selected_layers", "cavalry_select_layers",
-  "cavalry_delete_layers", "cavalry_duplicate_layer", "cavalry_rename_layer", "cavalry_reorder_layer",
-  "cavalry_set_parent", "cavalry_set_layer_timing", "cavalry_get_composition_info", "cavalry_set_composition_info",
-  "cavalry_set_current_frame", "cavalry_get_current_frame", "cavalry_render_png", "cavalry_render_filmstrip",
-  "cavalry_render_video", "cavalry_get_render_queue", "cavalry_cancel_render", "cavalry_import_asset",
-  "cavalry_list_attributes", "cavalry_get_bounding_box", "cavalry_save_scene", "cavalry_open_scene",
-  "cavalry_add_dynamic_attribute", "cavalry_undo", "cavalry_layer_order", "cavalry_keyframe_edit",
-  "cavalry_get_connections", "cavalry_expression", "cavalry_gradient", "cavalry_generate_palette",
-  "cavalry_compositions", "cavalry_transform", "cavalry_layer_types", "cavalry_playback",
-].sort();
 
 function* flagCases() {
   for (const strict of [undefined, "false", "1", "true"]) {
@@ -58,10 +45,9 @@ for (const mode of ["refclone_strict", "interactive_authoring", undefined]) {
         await server.connect(serverTransport);
         await client.connect(clientTransport);
         const strict = argv.length > 0 || ["1", "true"].includes(env.CAVALRY_MCP_STRICT_DSL ?? "");
-        const legacy = env.ENABLE_LEGACY_TOOLS === "true";
-        const crud = legacy || ["1", "true"].includes(env.CAVALRY_MCP_LEGACY_CRUD ?? "");
-        const expected = mode === "refclone_strict" ? REFCLONE : mode === "interactive_authoring" ? FULL :
-          strict ? STRICT_DSL : legacy ? FULL : crud ? CRUD : COMPACT;
+        const crud = ["1", "true"].includes(env.CAVALRY_MCP_LEGACY_CRUD ?? "");
+        const expected = mode === "refclone_strict" ? REFCLONE : mode === "interactive_authoring" ? CRUD :
+          strict ? STRICT_DSL : crud ? CRUD : COMPACT;
         const actual = (await client.listTools()).tools.map(tool => tool.name).sort();
         assert.deepEqual(actual, expected, JSON.stringify({ mode, env, argv }));
         assert.equal(loads, 0);

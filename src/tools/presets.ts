@@ -9,12 +9,25 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { searchPresets, resolvePreset, listPresets } from "../lib/index.js";
 
-export const PresetsInputSchema = z.object({
-  action: z.enum(["search", "resolve", "list"]).describe("Action: 'search', 'resolve', or 'list'"),
-  query: z.string().max(128).optional().describe("Keyword search query for presets"),
-  presetId: z.string().max(80).optional().describe("Preset ID to resolve and compile"),
-  params: z.record(z.string().max(64), z.unknown()).optional().describe("Preset parameter overrides"),
-}).strict();
+const ScalarParamSchema = z.union([
+  z.string().max(1024),
+  z.number().finite(),
+  z.boolean(),
+  z.null(),
+]);
+
+const PresetParamValueSchema = z.union([
+  ScalarParamSchema,
+  z.array(ScalarParamSchema).max(64),
+  z.record(z.string().min(1).max(64), ScalarParamSchema),
+]).describe("Bounded preset parameter override value");
+
+export const PresetsInputSchema = z.strictObject({
+  action: z.enum(["search", "resolve", "list"]).describe("Action to execute: 'search', 'resolve', or 'list'"),
+  query: z.string().min(1).max(128).optional().describe("Keyword search query for matching presets"),
+  presetId: z.string().min(1).max(80).optional().describe("Exact preset ID to resolve and compile"),
+  params: z.record(z.string().min(1).max(64), PresetParamValueSchema).optional().describe("Bounded preset parameter overrides"),
+});
 
 export type PresetsInput = z.infer<typeof PresetsInputSchema>;
 
@@ -58,10 +71,12 @@ export async function handlePresets(input: PresetsInput) {
 }
 
 export function registerPresetsTool(server: McpServer): void {
-  server.tool(
+  server.registerTool(
     "cavalry_presets",
-    "Query, search, and parameterize presets from the 120-preset SaaS library.",
-    PresetsInputSchema.shape,
+    {
+      description: "Query, search, and parameterize presets from the 120-preset SaaS library.",
+      inputSchema: PresetsInputSchema,
+    },
     async (args) => {
       const parsed = PresetsInputSchema.parse(args);
       return handlePresets(parsed);
