@@ -1,7 +1,10 @@
 node_modules/
 dist/
 *.log
+*.tgz
 .env
+.tmp*/
+tmp-*
 # Scratch output from live bridge probes (capabilities dumps, rendered frames).
 tmp-live-*
 # Generated cloned-style preview renders (smoke tests, live instantiate calls).

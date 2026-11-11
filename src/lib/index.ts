@@ -275,4 +275,33 @@ export function serializeCompactTsv(layers: CompactTsvLayer[]): string {
 }
 
 /** The library's version, for callers that pin against it. */
-export const LIB_VERSION = "3.2.0";
+export const LIB_VERSION = "3.4.0";
+
+export { SceneSpecV2Schema, validateSceneSpecV2, type SceneSpecV2, type SceneLayerSpec } from "../schema/SceneSpecV2.js";
+import { wrapAtomicUndo } from "../dsl/undo-wrapper.js";
+export { wrapAtomicUndo } from "../dsl/undo-wrapper.js";
+
+/**
+ * Emits an idempotent _mg.patch script call for a target layer.
+ */
+export function applyMgPatch(target: string, patchSpec: unknown): string {
+	return `_mg.patch(${JSON.stringify(target)}, ${JSON.stringify(patchSpec)});`;
+}
+
+/**
+ * Compiles a SceneSpecV2 document or declarative manifest into an atomic batch script.
+ */
+export function compileMgBatch(spec: unknown, options: { groupName?: string } = {}): string {
+	if (spec && typeof spec === "object" && "layers" in spec && Array.isArray((spec as Record<string, unknown>).layers)) {
+		const lines: string[] = [];
+		const layers = (spec as { layers: Array<{ id?: string }> }).layers;
+		for (const layer of layers) {
+			if (layer && layer.id) {
+				lines.push(applyMgPatch(layer.id, layer));
+			}
+		}
+		return wrapAtomicUndo(lines.join("\n"), options.groupName ?? "mcp_atomic_batch");
+	}
+	return wrapAtomicUndo(compileMgDsl(spec as Parameters<typeof compileMgDsl>[0]), options.groupName ?? "mcp_atomic_batch");
+}
+
