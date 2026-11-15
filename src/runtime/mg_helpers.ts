@@ -12,6 +12,7 @@ import { MG_KEYFRAMES_SOURCE } from "./mg_helpers/keyframes.js";
 import { MG_STUDIO_SOURCE } from "./mg_helpers/studio.js";
 import { MG_CANVALRY_SOURCE } from "./mg_helpers/canvalry.js";
 import { MG_MOTION_SOURCE } from "./mg_helpers/motion.js";
+import { MG_MOTION_CORE_SOURCE } from "./mg_helpers/motion-core.js";
 import { MG_RASTER_SOURCE } from "./mg_helpers/raster.js";
 
 /** JavaScript injected into Cavalry; this module is never executed by Node. */
@@ -27,6 +28,7 @@ const MG_BASE_SOURCE =
   MG_STUDIO_SOURCE +
   MG_CANVALRY_SOURCE +
   MG_MOTION_SOURCE +
+  MG_MOTION_CORE_SOURCE +
   MG_RASTER_SOURCE;
 
 /** _mg legacy DSL + _rb rig builders, injected into one script scope. */
