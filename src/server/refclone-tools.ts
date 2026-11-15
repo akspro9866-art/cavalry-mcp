@@ -5,6 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { PRESET_PACKS } from "../core-exports.js";
+import { resolveSandboxedPath } from "../shared/safe-path.js";
 import type { PresetParamDef } from "../presets/types.js";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
@@ -131,7 +132,10 @@ export function registerRefcloneTools(server: McpServer, dependencies: RefcloneT
   server.registerTool("refclone_inspect_reference", {
     description: "Inspect a reference video in-process through refclone. Returns reference evidence, not a claim about the live Cavalry scene.",
     inputSchema: inspectReferenceSchema,
-  }, args => dispatch(async () => (await load()).inspectReference(args)));
+  }, args => dispatch(async () => (await load()).inspectReference({
+    ...args,
+    ...(args.outputDir !== undefined ? { outputDir: resolveSandboxedPath(args.outputDir, "refclone-inspect", "outputDir") } : {}),
+  })));
 
   server.registerTool("refclone_get_preset_signatures", {
     description: "Read signatures for up to 15 exact preset pack IDs. Empty requests return no packs. Never returns executable preset bodies.",
@@ -143,5 +147,8 @@ export function registerRefcloneTools(server: McpServer, dependencies: RefcloneT
   server.registerTool("refclone_compile_and_converge", {
     description: "Validate a declarative BeatSpec in refclone, then compile and converge in-process. Raw code is forbidden by refclone strict validation; failed or blocked outcomes are errors.",
     inputSchema: compileAndConvergeSchema,
-  }, args => dispatch(async () => (await load()).compileAndConverge(args)));
+  }, args => dispatch(async () => (await load()).compileAndConverge({
+    ...args,
+    ...(args.outputDir !== undefined ? { outputDir: resolveSandboxedPath(args.outputDir, "refclone-converge", "outputDir") } : {}),
+  })));
 }

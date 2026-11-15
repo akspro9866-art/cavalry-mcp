@@ -47,10 +47,11 @@ function payload(result: ToolResult): Record<string, unknown> {
   return JSON.parse(result.content.map(item => item.text ?? "").join("\n"));
 }
 
-test("the strict surface is EXACTLY the four zero-slop tools", async () => {
+test("the strict surface is EXACTLY the five zero-slop tools", async () => {
   const listed = await client.listTools();
   assert.deepEqual(listed.tools.map(tool => tool.name).sort(), [
     "cavalry_clone_beat",
+    "cavalry_discover_presets",
     "cavalry_exec_mg",
     "cavalry_inspect_rig",
     "cavalry_query_presets",

@@ -1,9 +1,16 @@
 name: CI
 
+# The headless build-test job runs unconditionally on every push and pull
+# request: the trigger block deliberately carries no branch or path filters so
+# a push to any branch can never produce a zero-job run. Every matrix leg
+# executes strictly against the deterministic mock bridge — no leg ever needs
+# a live Cavalry 2.8.0 instance on port 8080, so hosted runners can neither
+# hang nor fail on connection refused.
+
 on:
   push:
-    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   build-test:
@@ -11,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
         node: [20, 22, 24]
     steps:
       - uses: actions/checkout@v4
@@ -23,3 +30,19 @@ jobs:
       - run: npm run build
       - run: npm run lint
       - run: npm run test:ci
+
+  # Non-blocking hygiene gate: dependency audit plus MCP tool-schema lint.
+  # Findings are reported but never fail the pipeline (advisory signal only).
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Dependency security audit (advisory, non-blocking)
+        run: npm audit --omit=dev || true
+      - name: MCP tool schema lint (advisory, non-blocking)
+        run: node scripts/schema-lint.mjs || true

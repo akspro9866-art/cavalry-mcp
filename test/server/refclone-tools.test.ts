@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -89,12 +91,21 @@ test("listing/signatures never load refclone; inspect and compile forward exact 
     assert.deepEqual(compile.required, ["beatSpec"]);
     await session.call("refclone_get_preset_signatures", { packNames: ["typography"] });
     assert.equal(loads, 0);
-    const inspectionArgs = { videoPath: "C:/references/demo.mp4", startSec: 0, endSec: 4, fps: 12, outputDir: "C:/out" };
+    // File-path parameters are sandboxed at the boundary: an outputDir under
+    // the OS temp root resolves to itself, so the adapter still receives the
+    // exact absolute path; anything outside the sandbox is rejected.
+    const sandboxOut = path.join(os.tmpdir(), "refclone-sandbox-out").split(path.sep).join("/");
+    const inspectionArgs = { videoPath: "C:/references/demo.mp4", startSec: 0, endSec: 4, fps: 12, outputDir: sandboxOut };
     assert.deepEqual(payload(await session.call("refclone_inspect_reference", inspectionArgs)), { evidence: [1, 2] });
-    const compilationArgs = { beatSpec: { beats: [{ id: "hero", params: { label: "hi" } }] }, outputDir: "C:/out", maxIterations: 8 };
+    const compilationArgs = { beatSpec: { beats: [{ id: "hero", params: { label: "hi" } }] }, outputDir: sandboxOut, maxIterations: 8 };
     assert.equal(payload(await session.call("refclone_compile_and_converge", compilationArgs)).converged, true);
     assert.deepEqual(calls, [["inspect", inspectionArgs], ["compile", compilationArgs]]);
     assert.equal(loads, 2);
+    const escapeAttempt = { videoPath: "x", outputDir: "C:/out" };
+    const escaped = await session.call("refclone_inspect_reference", escapeAttempt);
+    assert.equal(escaped.isError, true);
+    const escapeText = escaped.content.map(item => item.text ?? "").join("\n");
+    assert.match(escapeText, /escapes the allowed sandbox/);
   } finally { await session.close(); }
 });
 

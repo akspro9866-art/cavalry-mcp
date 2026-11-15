@@ -56,33 +56,41 @@ export function createServer({ env = process.env, argv = process.argv, refclone 
   const legacyCrud =
     interactive || env.CAVALRY_MCP_LEGACY_CRUD === "1" || env.CAVALRY_MCP_LEGACY_CRUD === "true";
   if (legacyCrud) {
-  server.tool(
+  server.registerTool(
     "cavalry_run_script",
-    "Run batched Cavalry JavaScript with _mg helpers and one Undo group. Return a value for JSON readback.",
     {
-      code: z.string().describe('JavaScript body executed as one atomic Cavalry script. Use _mg.* helpers for rig work, call `return` to read a value back as JSON, and prefer cavalry_batch over many single calls — each round trip costs about a second.'),
+      description:
+        "Run batched Cavalry JavaScript with _mg helpers and one Undo group. Return a value for JSON readback.",
+      inputSchema: z.strictObject({
+        code: z.string().max(65536).describe('JavaScript body executed as one atomic Cavalry script. Use _mg.* helpers for rig work, call `return` to read a value back as JSON, and prefer cavalry_batch over many single calls — each round trip costs about a second.'),
+      }),
     },
     async ({ code }) => result(await executeMotionScript(code)),
   );
 
-  server.tool(
+  server.registerTool(
     "cavalry_inspect",
-    "Inspect compact layer id/name/niceName/type summaries for the selection or active composition roots. Pass sampleFrames to also evaluate per-frame world-space bounding boxes, transforms, opacity and connections for the sampled layers (evaluated beat telemetry).",
     {
-      mode: z.enum(["selection", "roots"]).default("selection").describe('Which set to summarize: the current editor selection, or the active comp\'s layer roots.'),
-      sampleFrames: z.array(z.number().int()).max(16).optional().describe("Frames to evaluate at (max 16). Adds world-space bbox, transform, opacity and in/out connections per frame; the playhead is restored afterwards."),
-      sampleIds: z.array(z.string()).max(50).optional().describe("Layer ids to sample (max 50). Defaults to whatever the mode selected."),
+      description:
+        "Inspect compact layer id/name/niceName/type summaries for the selection or active composition roots. Pass sampleFrames to also evaluate per-frame world-space bounding boxes, transforms, opacity and connections for the sampled layers (evaluated beat telemetry).",
+      inputSchema: z.strictObject({
+        mode: z.enum(["selection", "roots"]).default("selection").describe('Which set to summarize: the current editor selection, or the active comp\'s layer roots.'),
+        sampleFrames: z.array(z.number().int().min(-1e9).max(1e9)).max(16).optional().describe("Frames to evaluate at (max 16). Adds world-space bbox, transform, opacity and in/out connections per frame; the playhead is restored afterwards."),
+        sampleIds: z.array(z.string().max(128)).max(50).optional().describe("Layer ids to sample (max 50). Defaults to whatever the mode selected."),
+      }),
     },
     async ({ mode, sampleFrames, sampleIds }) =>
       result(await executeMotionScript(compileInspection(mode, { sampleFrames, sampleIds }), undefined, { helpers: false })),
   );
 
-  server.tool(
+  server.registerTool(
     "cavalry_run_preset",
-    "Build a parameterized procedural motion rig in one atomic Cavalry execution.",
     {
-      name: z.enum(PRESET_NAMES).describe("Preset id from the library. cavalry_inspect or the library docs list the parameters each one accepts."),
-      params: z.record(z.string(), z.unknown()).optional().describe("Preset parameters (rig inputs such as timing, amplitude and stagger). Keys are checked against the preset's declared parameters; anything it does not declare is reported instead of silently dropped."),
+      description: "Build a parameterized procedural motion rig in one atomic Cavalry execution.",
+      inputSchema: z.strictObject({
+        name: z.enum(PRESET_NAMES).describe("Preset id from the library. cavalry_inspect or the library docs list the parameters each one accepts."),
+        params: z.record(z.string().max(128), z.unknown()).optional().describe("Preset parameters (rig inputs such as timing, amplitude and stagger). Keys are checked against the preset's declared parameters; anything it does not declare is reported instead of silently dropped."),
+      }),
     },
     async ({ name, params }) => result(await executeMotionScript(compilePreset(name, params))),
   );

@@ -23,6 +23,8 @@ import { type MgDslManifest } from "../runtime/mg_manifest.js";
 import { runBatchStep, runReadback, type BatchStepResponse } from "../bridge/stallion.js";
 import { resolvePreset, searchPresets, lookupPresetCompact, serializeCompactTsv, type CompactTsvLayer } from "../lib/index.js";
 import { registerClonedTools } from "./cloned-tools.js";
+import { resolveSandboxedPath } from "../shared/safe-path.js";
+import { queryDiscoveryIndex } from "../presets/discovery.js";
 
 function textResult(text: string, isError = false) {
   return isError
@@ -112,10 +114,10 @@ export function registerCompactTools(server: McpServer): void {
           .optional()
           .describe("Preset invocations applied before the manifest; their tracked roots are aliased as $<presetId>_<key>. Use cavalry_search_presets to find ids."),
         script: z.string().max(65536).optional().describe("Optional raw JS body executed after presets and before the manifest (escape hatch; _mg/_rb are preloaded)."),
-        sampleFrames: z.array(z.number().int()).max(64).optional().describe("Frames to sample after execution (max 64); each returns world-space bounding boxes. Default [0]."),
+        sampleFrames: z.array(z.number().int().min(-1e9).max(1e9)).max(64).optional().describe("Frames to sample after execution (max 64); each returns world-space bounding boxes. Default [0]."),
         queryLayers: z.array(z.string().max(128)).max(200).optional().describe("Layer ids/aliases ($name) to measure. Default: all layers."),
         renderFrames: z.boolean().optional().describe("Render a PNG per sampled frame."),
-        renderOutputDir: z.string().max(512).optional().describe("Directory for rendered PNGs (forward slashes)."),
+        renderOutputDir: z.string().max(512).optional().describe("Directory for rendered PNGs, under cwd, ~/.cavalry-mcp or temp (forward slashes)."),
         comp: z.string().max(128).optional().describe("Comp id to activate for the call (restored afterwards)."),
       }),
     },
@@ -133,7 +135,7 @@ export function registerCompactTools(server: McpServer): void {
           sampleFrames: args.sampleFrames && args.sampleFrames.length ? args.sampleFrames : [0],
           queryLayers: args.queryLayers,
           renderFrames: args.renderFrames,
-          renderOutputDir: args.renderOutputDir,
+          renderOutputDir: args.renderOutputDir === undefined ? undefined : resolveSandboxedPath(args.renderOutputDir, "previews/frames", "renderOutputDir"),
           compId: args.comp,
         });
         if (!response.ok) {
@@ -195,6 +197,36 @@ export function registerCompactTools(server: McpServer): void {
         return jsonResult(result);
       } catch (err) {
         return textResult(`cavalry_search_presets failed: ${message(err)}`, true);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // cavalry_discover_presets — zero-bloat lookup over the precomputed index
+  // -------------------------------------------------------------------------
+  server.registerTool(
+    "cavalry_discover_presets",
+    {
+      description:
+        "Low-token preset discovery over the precomputed lightweight index: returns ONLY matching preset signatures and required parameters, never preset implementation code.",
+      inputSchema: z.strictObject({
+        query: z.string().max(256).optional().describe('Space-separated keywords; every word must match (AND). Examples: "counter spring", "progress bar", "stagger".'),
+        category: z.string().max(64).optional().describe("Category filter: id, wire code or label fragment."),
+        tags: z.array(z.string().max(32)).max(8).optional().describe("Motion-tag filter (pop, slide, stagger, count, wave, pulse, …); every tag must appear."),
+        limit: z.number().int().min(1).max(48).optional().describe("Max presets returned (default 12, cap 48)."),
+      }),
+    },
+    async args => {
+      try {
+        const result = await queryDiscoveryIndex(args);
+        if (!result.matched) {
+          return textResult(
+            `No preset matches ${JSON.stringify(args.query ?? "")}${args.category ? ` in category ${args.category}` : ""}. ${result.total} presets are indexed; try a broader keyword or drop filters.`,
+          );
+        }
+        return jsonResult(result);
+      } catch (err) {
+        return textResult(`cavalry_discover_presets failed: ${message(err)}`, true);
       }
     },
   );

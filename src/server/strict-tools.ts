@@ -25,6 +25,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { resolveSandboxedPath } from "../shared/safe-path.js";
+import { queryDiscoveryIndex } from "../presets/discovery.js";
 import {
   runBatchInspect,
   runBatchStep,
@@ -95,15 +97,18 @@ export function registerStrictTools(server: McpServer): void {
   // -------------------------------------------------------------------------
   // cavalry_exec_mg — validate + execute a full _mg payload in one shot
   // -------------------------------------------------------------------------
-  server.tool(
+  server.registerTool(
     "cavalry_exec_mg",
-    "Compile and execute a full declarative _mg manifest (plus optional preset invocations) in ONE atomic round trip. The manifest is validated and normalized first: common attribute aliases (fillColor -> material.fillColor, rot -> rotation, alpha -> opacity, pos -> position, …) are rewritten and reported as `fixes`. No raw per-frame keyframe baking, no raw Cavalry JS.",
     {
-      manifest: z.record(z.string(), z.unknown()).describe('Declarative _mg manifest: { comp?: {width,height,fps,endFrame,bg}, layers?: [{as, kind: "shape"|"layer"|"text"|"svg"|"image", ...}], ops?: [{op: "set"|"keyframe"|"easing"|"connect"|"expression"|"delete"|"order"|"fit", ...}], presets?: [{id, params}] }. Later ops address created layers as "$name".'),
-      script: z.string().optional().describe("Optional raw JS body for rig logic the manifest cannot express (escape hatch; _mg/_rb are preloaded). Prefer manifest ops."),
-      sampleFrames: z.array(z.number().int()).max(64).optional().describe("Frames to sample after execution (max 64). Default [0]."),
-      queryLayers: z.array(z.string()).max(200).optional().describe("Layer ids/aliases ($name) to measure."),
-      comp: z.string().optional().describe("Comp id to activate for the call (restored afterwards)."),
+      description:
+        "Compile and execute a full declarative _mg manifest (plus optional preset invocations) in ONE atomic round trip. The manifest is validated and normalized first: common attribute aliases (fillColor -> material.fillColor, rot -> rotation, alpha -> opacity, pos -> position, …) are rewritten and reported as `fixes`. No raw per-frame keyframe baking, no raw Cavalry JS.",
+      inputSchema: z.strictObject({
+        manifest: z.record(z.string().max(128), z.unknown()).describe('Declarative _mg manifest: { comp?: {width,height,fps,endFrame,bg}, layers?: [{as, kind: "shape"|"layer"|"text"|"svg"|"image", ...}], ops?: [{op: "set"|"keyframe"|"easing"|"connect"|"expression"|"delete"|"order"|"fit", ...}], presets?: [{id, params}] }. Later ops address created layers as "$name".'),
+        script: z.string().max(65536).optional().describe("Optional raw JS body for rig logic the manifest cannot express (escape hatch; _mg/_rb are preloaded). Prefer manifest ops."),
+        sampleFrames: z.array(z.number().int().min(-1e9).max(1e9)).max(64).optional().describe("Frames to sample after execution (max 64). Default [0]."),
+        queryLayers: z.array(z.string().max(128)).max(200).optional().describe("Layer ids/aliases ($name) to measure."),
+        comp: z.string().max(128).optional().describe("Comp id to activate for the call (restored afterwards)."),
+      }),
     },
     async args => {
       try {
@@ -148,12 +153,15 @@ export function registerStrictTools(server: McpServer): void {
   // -------------------------------------------------------------------------
   // cavalry_query_presets — bounded preset discovery
   // -------------------------------------------------------------------------
-  server.tool(
+  server.registerTool(
     "cavalry_query_presets",
-    "Keyword-filter the 120-preset procedural library (14 category packs) and return compact preset signatures: id, motion signature, required parameters, defaults. Always query before invoking a preset in cavalry_exec_mg — the catalog is never listed inline.",
     {
-      query: z.string().optional().describe('Space-separated keywords; every word must match (AND). Examples: "counter spring", "progress bar", "stagger".'),
-      category: z.string().optional().describe("Category filter: id, index (1-14) or label fragment."),
+      description:
+        "Keyword-filter the 120-preset procedural library (14 category packs) and return compact preset signatures: id, motion signature, required parameters, defaults. Always query before invoking a preset in cavalry_exec_mg — the catalog is never listed inline.",
+      inputSchema: z.strictObject({
+        query: z.string().max(256).optional().describe('Space-separated keywords; every word must match (AND). Examples: "counter spring", "progress bar", "stagger".'),
+        category: z.string().max(64).optional().describe("Category filter: id, index (1-14) or label fragment."),
+      }),
     },
     async args => {
       try {
@@ -180,16 +188,49 @@ export function registerStrictTools(server: McpServer): void {
   );
 
   // -------------------------------------------------------------------------
+  // cavalry_discover_presets — zero-bloat lookup over the precomputed index
+  // -------------------------------------------------------------------------
+  server.registerTool(
+    "cavalry_discover_presets",
+    {
+      description:
+        "Low-token preset discovery over the precomputed lightweight index: returns ONLY matching preset signatures and required parameters, never preset implementation code.",
+      inputSchema: z.strictObject({
+        query: z.string().max(256).optional().describe('Space-separated keywords; every word must match (AND). Examples: "counter spring", "progress bar", "stagger".'),
+        category: z.string().max(64).optional().describe("Category filter: id, wire code or label fragment."),
+        tags: z.array(z.string().max(32)).max(8).optional().describe("Motion-tag filter (pop, slide, stagger, count, wave, pulse, …); every tag must appear."),
+        limit: z.number().int().min(1).max(48).optional().describe("Max presets returned (default 12, cap 48)."),
+      }),
+    },
+    async args => {
+      try {
+        const result = await queryDiscoveryIndex(args);
+        if (!result.matched) {
+          return textResult(
+            `No preset matches ${JSON.stringify(args.query ?? "")}${args.category ? ` in category ${args.category}` : ""}. ${result.total} presets are indexed; try a broader keyword or drop filters.`,
+          );
+        }
+        return jsonResult(result);
+      } catch (err) {
+        return textResult(`cavalry_discover_presets failed: ${message(err)}`, true);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
   // cavalry_inspect_rig — compact hierarchy + bbox trajectory summary
   // -------------------------------------------------------------------------
-  server.tool(
+  server.registerTool(
     "cavalry_inspect_rig",
-    "Inspect the live rig through stallion /batch_inspect: scrub the requested frames, return each layer's world-space bounding-box trajectory and attribute values in one compact summary. Geometry only — no rendering, playhead restored.",
     {
-      frames: z.array(z.number().int()).min(1).max(64).describe("Frames to evaluate (1..64), e.g. [f_start, f_mid1, f_mid2, f_end]."),
-      layerIds: z.array(z.string()).max(200).optional().describe("Layer ids/aliases to measure. Default: every layer in the active comp."),
-      attributes: z.array(z.string()).max(16).optional().describe("Attribute paths to include (default: position/scale/rotation/opacity)."),
-      comp: z.string().optional().describe("Comp id (default: active comp)."),
+      description:
+        "Inspect the live rig through stallion /batch_inspect: scrub the requested frames, return each layer's world-space bounding-box trajectory and attribute values in one compact summary. Geometry only — no rendering, playhead restored.",
+      inputSchema: z.strictObject({
+        frames: z.array(z.number().int().min(-1e9).max(1e9)).min(1).max(64).describe("Frames to evaluate (1..64), e.g. [f_start, f_mid1, f_mid2, f_end]."),
+        layerIds: z.array(z.string().max(128)).max(200).optional().describe("Layer ids/aliases to measure. Default: every layer in the active comp."),
+        attributes: z.array(z.string().max(128)).max(16).optional().describe("Attribute paths to include (default: position/scale/rotation/opacity)."),
+        comp: z.string().max(128).optional().describe("Comp id (default: active comp)."),
+      }),
     },
     async args => {
       try {
@@ -212,20 +253,29 @@ export function registerStrictTools(server: McpServer): void {
   // -------------------------------------------------------------------------
   // cavalry_clone_beat — refclone's autonomous local pipeline, one beat
   // -------------------------------------------------------------------------
-  server.tool(
+  server.registerTool(
     "cavalry_clone_beat",
-    "Run refclone's autonomous zero-slop pipeline for one reference beat (local, deterministic): deconstruction -> promotion -> _mg compile -> Stage 4.5 bbox solver -> SSIM gate. Returns the final convergence telemetry (bbox L2 before/after, SSIM, LLM tokens consumed). Requires the sibling refclone checkout (or CAVALRY_REFCLONE_PATH).",
     {
-      plan: z.record(z.string(), z.unknown()).optional().describe("Inline zero-slop pipeline plan (tracks, crops, elements, comp, thresholds). Written to a temp file and passed as --plan."),
-      planPath: z.string().optional().describe("Path to a plan JSON on disk. Takes precedence over `plan`."),
-      refclonePath: z.string().optional().describe("Path to the refclone checkout (its src/cli.mjs is used). Default: $CAVALRY_REFCLONE_PATH or the sibling directory."),
-      jobDirectory: z.string().optional().describe("Directory for run artifacts."),
-      baseUrl: z.string().optional().describe("Stallion base URL override (default http://127.0.0.1:8080 or $STALLION_URL)."),
-      timeoutMs: z.number().int().min(1000).max(900_000).optional().describe("Wall-clock budget for the run (default 300000)."),
+      description:
+        "Run refclone's autonomous zero-slop pipeline for one reference beat (local, deterministic): deconstruction -> promotion -> _mg compile -> Stage 4.5 bbox solver -> SSIM gate. Returns the final convergence telemetry (bbox L2 before/after, SSIM, LLM tokens consumed). Requires the sibling refclone checkout (or CAVALRY_REFCLONE_PATH).",
+      inputSchema: z.strictObject({
+        plan: z.record(z.string().max(128), z.unknown()).optional().describe("Inline zero-slop pipeline plan (tracks, crops, elements, comp, thresholds). Written to a temp file and passed as --plan."),
+        planPath: z.string().max(512).optional().describe("Path to a plan JSON on disk, under cwd, ~/.cavalry-mcp or temp. Takes precedence over `plan`."),
+        refclonePath: z.string().max(512).optional().describe("Path to the refclone checkout (its src/cli.mjs is used). Default: $CAVALRY_REFCLONE_PATH or the sibling directory."),
+        jobDirectory: z.string().max(512).optional().describe("Directory for run artifacts, under cwd, ~/.cavalry-mcp or temp."),
+        baseUrl: z.string().max(256).optional().describe("Stallion base URL override (default http://127.0.0.1:8080 or $STALLION_URL)."),
+        timeoutMs: z.number().int().min(1000).max(900_000).optional().describe("Wall-clock budget for the run (default 300000)."),
+      }),
     },
     async args => {
       try {
-        const outcome = await runRefcloneBeat(args);
+        // File-path parameters are sandboxed before they reach the filesystem.
+        const sanitized = {
+          ...args,
+          ...(args.planPath !== undefined ? { planPath: resolveSandboxedPath(args.planPath, "plan.json", "planPath") } : {}),
+          ...(args.jobDirectory !== undefined ? { jobDirectory: resolveSandboxedPath(args.jobDirectory, "jobs", "jobDirectory") } : {}),
+        };
+        const outcome = await runRefcloneBeat(sanitized);
         return jsonResult(outcome.payload, !outcome.ok);
       } catch (err) {
         return textResult(`cavalry_clone_beat failed: ${message(err)}`, true);

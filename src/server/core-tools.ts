@@ -20,6 +20,7 @@ import {
 import { runVerifyFrames } from "../tools/verify.js";
 import { runProbe } from "../tools/probe.js";
 import { executeMotionScript } from "../runtime/execute.js";
+import { resolveSandboxedPath, sanitizeNameSegment } from "../shared/safe-path.js";
 
 const FRAME_LIST = z
   .union([z.string(), z.array(z.union([z.string(), z.number()]))])
@@ -75,16 +76,20 @@ export function registerCoreTools(server: McpServer): void {
   // -------------------------------------------------------------------------
   // cavalry_batch — many operations, one round trip
   // -------------------------------------------------------------------------
-  server.tool(
+  server.registerTool(
     "cavalry_batch",
-    "Execute ordered scene operations in one atomic round trip: create, set, keyframe, easing, connect, delete, more. Name new layers with \"as\" and reference them later as \"$name\". Per-op ok/error comes back; one failure does not kill the batch.",
     {
-      operations: z
-        .array(z.record(z.string(), z.unknown()))
-        .describe(`Ordered operations. Each bridge call costs ~1s, so build scenes here instead of one call per step.
+      description:
+        "Execute ordered scene operations in one atomic round trip: create, set, keyframe, easing, connect, delete, more. Name new layers with \"as\" and reference them later as \"$name\". Per-op ok/error comes back; one failure does not kill the batch.",
+      inputSchema: z.strictObject({
+        operations: z
+          .array(z.record(z.string(), z.unknown()))
+          .max(400)
+          .describe(`Ordered operations. Each bridge call costs ~1s, so build scenes here instead of one call per step.
 Ops: create {layerType, name?, as?} | duplicate {layerId, as?, withInputConnections?} | set {layerId, attributes} | keyframe {layerId, frame, attributes} | keyframe {layerId, keyframes:[{frame, attributes}]} | easing {layerId, attrPath, frame, easingType, expression?} | connect {sourceLayerId, sourceAttr, targetLayerId, targetAttr, force?} | setGenerator {layerId, generatorType, attrPath?} | addDynamic {layerId, attrName, attrType} | rename {layerId, name} | order {layerId, to: forward|front|backward|back} | expression {layerId, attrPath, expression} | gradient {layerId, attrPath, colors:[hex,…]} | select {layerIds} | delete {layerIds} | timing {layerId, inFrame?, outFrame?, offset?} | setParent {layerId, parentLayerId?} | reorder {layerId, underLayerId}.
 easingType is one of ${EASING_LIST}; "expression" (a Cavalry easing curve) is only accepted with Custom or None. Attribute paths are dot-notation, e.g. "position.x", "material.materialColor", "fontSize".
 Example: [{"op":"create","layerType":"basicShape","name":"BG","as":"bg"},{"op":"set","layerId":"$bg","attributes":{"material.materialColor":"#101828"}},{"op":"keyframe","layerId":"$bg","keyframes":[{"frame":0,"attributes":{"position.x":0}},{"frame":30,"attributes":{"position.x":200}}]},{"op":"easing","layerId":"$bg","attrPath":"position.x","frame":30,"easingType":"Custom","expression":"t*t"}]`),
+      }),
     },
     async ({ operations }) => {
       let code: string;
@@ -121,25 +126,28 @@ Example: [{"op":"create","layerType":"basicShape","name":"BG","as":"bg"},{"op":"
   // -------------------------------------------------------------------------
   // cavalry_verify_frames — render a few frames, report collisions
   // -------------------------------------------------------------------------
-  server.tool(
+  server.registerTool(
     "cavalry_verify_frames",
-    "Render specific frames and report layout collisions, unseen layers and missing previews in one call. Use it after building a scene and before committing to a long sequence render.",
     {
-      frames: FRAME_LIST,
-      outDir: z.string().optional().describe("Preview directory (default ~/.cavalry-mcp/previews)."),
-      comp: z.string().optional().describe("Comp id to activate for the render (restored afterwards)."),
-      scale: z.number().int().min(1).max(400).optional().describe("PNG scale percentage (default 100)."),
-      prefix: z.string().optional().describe("Preview file prefix (default \"frame\")."),
-      includeHidden: z.boolean().optional().describe("Also inspect hidden and time-out-of-range layers."),
+      description:
+        "Render specific frames and report layout collisions, unseen layers and missing previews in one call. Use it after building a scene and before committing to a long sequence render.",
+      inputSchema: z.strictObject({
+        frames: FRAME_LIST,
+        outDir: z.string().max(512).optional().describe("Preview directory under cwd, ~/.cavalry-mcp or temp (default ~/.cavalry-mcp/previews)."),
+        comp: z.string().max(128).optional().describe("Comp id to activate for the render (restored afterwards)."),
+        scale: z.number().int().min(1).max(400).optional().describe("PNG scale percentage (default 100)."),
+        prefix: z.string().max(64).optional().describe("Preview file prefix (default \"frame\")."),
+        includeHidden: z.boolean().optional().describe("Also inspect hidden and time-out-of-range layers."),
+      }),
     },
     async args => {
       try {
         const result = await runVerifyFrames({
           frames: args.frames,
-          outDir: args.outDir,
+          outDir: args.outDir === undefined ? undefined : resolveSandboxedPath(args.outDir, "~/.cavalry-mcp/previews", "outDir"),
           comp: args.comp,
           scale: args.scale,
-          prefix: args.prefix,
+          prefix: args.prefix === undefined ? undefined : sanitizeNameSegment(args.prefix, "frame", "prefix"),
           includeHidden: args.includeHidden,
         });
         return jsonResult({
@@ -161,28 +169,31 @@ Example: [{"op":"create","layerType":"basicShape","name":"BG","as":"bg"},{"op":"
   // -------------------------------------------------------------------------
   // cavalry_render_frames — chunked sequence render
   // -------------------------------------------------------------------------
-  server.tool(
+  server.registerTool(
     "cavalry_render_frames",
-    "Render a frame range to numbered PNGs in chunks sized against the result deadline, restoring the playhead afterwards. Files on disk are the progress signal; a chunk cut short reports its pending frames instead of re-sending them.",
     {
-      frames: FRAME_LIST,
-      outDir: z.string().optional().describe("Output directory (default ~/.cavalry-mcp/previews/frames)."),
-      pattern: z.string().optional().describe('File name template with a padded token (default "frame-%06d").'),
-      scale: z.number().int().min(1).max(400).optional().describe("PNG scale percentage (default 100)."),
-      comp: z.string().optional().describe("Comp id to activate for the render (restored afterwards)."),
-      chunkFrames: z.number().int().min(1).max(40).optional().describe("Frames per bridge call; overrides the budget estimate."),
-      perFrameMs: z.number().int().min(50).max(60000).optional().describe("Measured cost of one frame, used to size chunks (default 900)."),
-      timeoutMs: z.number().int().min(1000).max(1800000).optional().describe("Result deadline for a single chunk."),
-      graceMs: z.number().int().min(0).max(600000).optional().describe("Extra wait for files that land after a chunk stops answering (default 20000)."),
-      resume: z.boolean().optional().describe("Reuse non-empty files already on disk (default true)."),
-      manifestLimit: z.number().int().min(0).max(500).optional().describe("Max entries per frame list in the result (default 50)."),
+      description:
+        "Render a frame range to numbered PNGs in chunks sized against the result deadline, restoring the playhead afterwards. Files on disk are the progress signal; a chunk cut short reports its pending frames instead of re-sending them.",
+      inputSchema: z.strictObject({
+        frames: FRAME_LIST,
+        outDir: z.string().max(512).optional().describe("Output directory under cwd, ~/.cavalry-mcp or temp (default ~/.cavalry-mcp/previews/frames)."),
+        pattern: z.string().max(128).optional().describe('File name template with a padded token (default "frame-%06d").'),
+        scale: z.number().int().min(1).max(400).optional().describe("PNG scale percentage (default 100)."),
+        comp: z.string().max(128).optional().describe("Comp id to activate for the render (restored afterwards)."),
+        chunkFrames: z.number().int().min(1).max(40).optional().describe("Frames per bridge call; overrides the budget estimate."),
+        perFrameMs: z.number().int().min(50).max(60000).optional().describe("Measured cost of one frame, used to size chunks (default 900)."),
+        timeoutMs: z.number().int().min(1000).max(1800000).optional().describe("Result deadline for a single chunk."),
+        graceMs: z.number().int().min(0).max(600000).optional().describe("Extra wait for files that land after a chunk stops answering (default 20000)."),
+        resume: z.boolean().optional().describe("Reuse non-empty files already on disk (default true)."),
+        manifestLimit: z.number().int().min(0).max(500).optional().describe("Max entries per frame list in the result (default 50)."),
+      }),
     },
     async args => {
       try {
         const result = await runRenderFrames({
           frames: args.frames,
-          outDir: args.outDir,
-          pattern: args.pattern,
+          outDir: args.outDir === undefined ? undefined : resolveSandboxedPath(args.outDir, "~/.cavalry-mcp/previews/frames", "outDir"),
+          pattern: args.pattern === undefined ? undefined : sanitizeNameSegment(args.pattern, "frame-%06d", "pattern"),
           scale: args.scale,
           comp: args.comp,
           chunkFrames: args.chunkFrames,
@@ -202,18 +213,21 @@ Example: [{"op":"create","layerType":"basicShape","name":"BG","as":"bg"},{"op":"
   // -------------------------------------------------------------------------
   // cavalry_probe_api — what does this build actually expose?
   // -------------------------------------------------------------------------
-  server.tool(
+  server.registerTool(
     "cavalry_probe_api",
-    "Ask this running Cavalry build what it exposes: the live api function list, per-layer-type attribute names, and a capabilities report written to disk. Use it before guessing an attribute path or function name.",
     {
-      layerIds: z.array(z.string()).optional().describe("Layer ids whose full attribute list to read (max 20)."),
-      functions: z.array(z.string()).optional().describe("Function names to test (default: the built-in watch-list)."),
-      sampleTypes: z.boolean().optional().describe("Read one representative layer per type in the active comp (default true)."),
-      includeLayerTypes: z.boolean().optional().describe("Include api.getAllLayerTypes() in the report (default true)."),
-      inlineSurface: z.boolean().optional().describe("Return the full function-name list instead of only the file path."),
-      writeFile: z.string().optional().describe("Report path (default ~/.cavalry-mcp/cavalry-api-capabilities.json)."),
-      query: z.string().optional().describe("Optional offline documentation and API signature search query (e.g. duplicator, materialColor)."),
-      offlineOnly: z.boolean().optional().describe("When true with query, search the offline Cavalry 2.8 knowledge base without calling the bridge."),
+      description:
+        "Ask this running Cavalry build what it exposes: the live api function list, per-layer-type attribute names, and a capabilities report written to disk. Use it before guessing an attribute path or function name.",
+      inputSchema: z.strictObject({
+        layerIds: z.array(z.string().max(128)).max(20).optional().describe("Layer ids whose full attribute list to read (max 20)."),
+        functions: z.array(z.string().max(128)).max(200).optional().describe("Function names to test (default: the built-in watch-list)."),
+        sampleTypes: z.boolean().optional().describe("Read one representative layer per type in the active comp (default true)."),
+        includeLayerTypes: z.boolean().optional().describe("Include api.getAllLayerTypes() in the report (default true)."),
+        inlineSurface: z.boolean().optional().describe("Return the full function-name list instead of only the file path."),
+        writeFile: z.string().max(512).optional().describe("Report path under cwd, ~/.cavalry-mcp or temp (default ~/.cavalry-mcp/cavalry-api-capabilities.json)."),
+        query: z.string().max(256).optional().describe("Optional offline documentation and API signature search query (e.g. duplicator, materialColor)."),
+        offlineOnly: z.boolean().optional().describe("When true with query, search the offline Cavalry 2.8 knowledge base without calling the bridge."),
+      }),
     },
     async args => {
       try {
@@ -223,7 +237,7 @@ Example: [{"op":"create","layerType":"basicShape","name":"BG","as":"bg"},{"op":"
           sampleTypes: args.sampleTypes,
           includeLayerTypes: args.includeLayerTypes,
           inlineSurface: args.inlineSurface,
-          writeFile: args.writeFile,
+          writeFile: args.writeFile === undefined ? undefined : resolveSandboxedPath(args.writeFile, "~/.cavalry-mcp/cavalry-api-capabilities.json", "writeFile"),
           query: args.query,
           offlineOnly: args.offlineOnly,
         });
@@ -237,14 +251,17 @@ Example: [{"op":"create","layerType":"basicShape","name":"BG","as":"bg"},{"op":"
   // -------------------------------------------------------------------------
   // cavalry_doctor — is the stack actually up?
   // -------------------------------------------------------------------------
-  server.tool(
+  server.registerTool(
     "cavalry_doctor",
-    "Diagnose the stack in one call: Stallion bridge connectivity and latency, whether the Cavalry runtime can execute a script, and whether ffmpeg/ffprobe are available. Read-only; it never edits or renders a scene.",
     {
-      timeoutMs: z.number().int().min(250).max(60000).optional().describe("Per-probe ceiling in ms (default 4000). Raise it while Cavalry is mid-render rather than treating a slow answer as a failure."),
-      probeRuntime: z.boolean().optional().describe("Run the api.exec round trip that proves the script host is awake (default true). Set false for a network-and-binaries-only check."),
-      expectedVersion: z.string().optional().describe('Cavalry minor to compare against, e.g. "2.8" (default CAVALRY_EXPECTED_VERSION, else 2.8).'),
-      format: z.enum(["text", "json"]).optional().describe('"text" for one line per check with fixes, "json" for the structured report (default text).'),
+      description:
+        "Diagnose the stack in one call: Stallion bridge connectivity and latency, whether the Cavalry runtime can execute a script, and whether ffmpeg/ffprobe are available. Read-only; it never edits or renders a scene.",
+      inputSchema: z.strictObject({
+        timeoutMs: z.number().int().min(250).max(60000).optional().describe("Per-probe ceiling in ms (default 4000). Raise it while Cavalry is mid-render rather than treating a slow answer as a failure."),
+        probeRuntime: z.boolean().optional().describe("Run the api.exec round trip that proves the script host is awake (default true). Set false for a network-and-binaries-only check."),
+        expectedVersion: z.string().max(32).optional().describe('Cavalry minor to compare against, e.g. "2.8" (default CAVALRY_EXPECTED_VERSION, else 2.8).'),
+        format: z.enum(["text", "json"]).optional().describe('"text" for one line per check with fixes, "json" for the structured report (default text).'),
+      }),
     },
     async args => {
       try {

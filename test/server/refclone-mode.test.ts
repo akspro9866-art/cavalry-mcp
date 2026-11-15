@@ -5,10 +5,11 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer } from "../../src/index.js";
 
 const REFCLONE = ["refclone_inspect_reference", "refclone_get_preset_signatures", "refclone_compile_and_converge"].sort();
-const STRICT_DSL = ["cavalry_exec_mg", "cavalry_query_presets", "cavalry_inspect_rig", "cavalry_clone_beat"].sort();
+const STRICT_DSL = ["cavalry_exec_mg", "cavalry_query_presets", "cavalry_discover_presets", "cavalry_inspect_rig", "cavalry_clone_beat"].sort();
 const COMPACT = [
   "cavalry_apply_dsl",
   "cavalry_search_presets",
+  "cavalry_discover_presets",
   "cavalry_inspect_compact",
   "list_cloned_styles",
   "instantiate_cloned_style",

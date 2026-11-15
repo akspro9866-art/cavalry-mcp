@@ -101,6 +101,7 @@ async function publishedTools(legacy: boolean) {
 const COMPACT_TOOLS = [
   "cavalry_apply_dsl",
   "cavalry_search_presets",
+  "cavalry_discover_presets",
   "cavalry_inspect_compact",
   "list_cloned_styles",
   "instantiate_cloned_style",
@@ -111,9 +112,10 @@ for (const crud of [false, true]) {
   test(`${crud ? "crud" : "default"} MCP surface publishes strict, fully described input schemas`, async () => {
     const { tools, close } = await publishedTools(crud);
     try {
-      // Default = the three compact tools plus the three cloned-style tools,
-      // exactly. CRUD adds the promoted trio and the five core tools (14 total).
-      assert.equal(tools.length, crud ? 14 : 6);
+      // Default = the compact tools (apply_dsl, search_presets,
+      // discover_presets, inspect_compact) plus the three cloned-style tools,
+      // exactly. CRUD adds the promoted trio and the five core tools (15 total).
+      assert.equal(tools.length, crud ? 15 : 7);
       if (!crud) {
         assert.deepEqual(tools.map(tool => tool.name).sort(), COMPACT_TOOLS.slice().sort());
       }
@@ -121,7 +123,7 @@ for (const crud of [false, true]) {
       for (const tool of tools) {
         assert.ok((tool.description ?? "").trim().length > 20, `${tool.name} has no useful tool description`);
         assert.equal(tool.inputSchema.type, "object", `${tool.name} input schema must be an object`);
-        if (["cavalry_apply_dsl", "cavalry_search_presets", "cavalry_inspect_compact"].includes(tool.name)) {
+        if (["cavalry_apply_dsl", "cavalry_search_presets", "cavalry_discover_presets", "cavalry_inspect_compact"].includes(tool.name)) {
           assert.equal((tool.inputSchema as JsonSchema).additionalProperties, false, `${tool.name} must publish additionalProperties: false`);
         }
         assertDescribed(tool.inputSchema as JsonSchema, tool.name, problems);

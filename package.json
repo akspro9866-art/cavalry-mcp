@@ -17,8 +17,9 @@
   ],
   "scripts": {
     "prepare": "npm run build",
-    "build": "tsc && node scripts/build-preset-manifest.mjs && node scripts/build-preset-docs.mjs",
+    "build": "tsc && node scripts/build-preset-manifest.mjs && node scripts/build-discovery-index.mjs && node scripts/build-preset-docs.mjs",
     "build:manifest": "node scripts/build-preset-manifest.mjs",
+    "build:discovery": "node scripts/build-discovery-index.mjs",
     "build:docs": "node scripts/build-preset-docs.mjs",
     "start": "node dist/index.js",
     "dev": "tsc --watch",
@@ -54,22 +55,22 @@
     "url": "https://github.com/akspro9866-art/cavalry-mcp/issues"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.32.2",
-    "bezier-easing": "^3.2.0",
-    "pngjs": "^7.0.0",
-    "svg-path-commander": "^2.3.3",
-    "zod": "^4.6.7"
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "bezier-easing": "3.2.0",
+    "pngjs": "7.0.0",
+    "svg-path-commander": "2.3.3",
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.5",
-    "@scenery/cavalry-types": "^1.1.0",
-    "@types/node": "^22.0.0",
-    "@types/pngjs": "^6.0.5",
-    "eslint": "^9.39.2",
-    "globals": "^16.5.0",
-    "tsx": "^4.23.15",
-    "typescript": "^5.7.0",
-    "typescript-eslint": "^8.72.1"
+    "@eslint/js": "9.39.5",
+    "@scenery/cavalry-types": "1.1.0",
+    "@types/node": "22.20.5",
+    "@types/pngjs": "6.0.5",
+    "eslint": "9.39.5",
+    "globals": "16.5.0",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.72.2"
   },
   "exports": {
     ".": "./dist/index.js",

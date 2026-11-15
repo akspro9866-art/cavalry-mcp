@@ -12,6 +12,7 @@
  * No scene graph and no full preset JSON ever enters the model context.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { resolveSandboxedPath } from "../shared/safe-path.js";
 import { z } from "zod";
 import { runBatchStep, runExportCompRigOverrides, type ExportCompRigOverridesResponse } from "../bridge/stallion.js";
 import { compileMgDsl } from "../runtime/mg_manifest.js";
@@ -92,10 +93,13 @@ async function readRigOverrides(
 }
 
 export function registerClonedTools(server: McpServer): void {
-  server.tool(
+  server.registerTool(
     "list_cloned_styles",
-    "List reusable cloned style presets exported by refclone Stage 6. Reads the preset directory at call time (no restart/rebuild). Returns only id, description, default_duration_sec and slot_keys; the scene graph stays on disk.",
-    {},
+    {
+      description:
+        "List reusable cloned style presets exported by refclone Stage 6. Reads the preset directory at call time (no restart/rebuild). Returns only id, description, default_duration_sec and slot_keys; the scene graph stays on disk.",
+      inputSchema: z.strictObject({}),
+    },
     async () => {
       try {
         return jsonResult(listClonedStyles());
@@ -105,17 +109,20 @@ export function registerClonedTools(server: McpServer): void {
     },
   );
 
-  server.tool(
+  server.registerTool(
     "instantiate_cloned_style",
-    "Generate a new Cavalry comp from a cloned style: bind slots, denormalize stored ratios to the requested duration/size and execute the rig in ONE atomic /batch-step. Returns the compId and a PNG at hero time 0.5.",
     {
-      style_id: z.string().describe("Cloned style id from list_cloned_styles."),
-      comp_name: z.string().optional().describe("New composition name; defaults to a unique Cloned <style> name."),
-      duration_sec: z.number().positive().max(300).optional().describe("Target duration in seconds (default: preset duration)."),
-      fps: z.number().int().min(1).max(120).optional().describe("Target frame rate (default: preset fps)."),
-      width: z.number().int().min(16).max(8192).optional().describe("Target comp width (default: preset width). Ratios scale to it."),
-      height: z.number().int().min(16).max(8192).optional().describe("Target comp height (default: preset height). Ratios scale to it."),
-      slots: z.record(z.string(), z.unknown()).optional().describe("Slot values: headline, subhead, cta_text, text_N, bg_color, primary_color, accent_color, text_color, logo_svg, media_N, items[]."),
+      description:
+        "Generate a new Cavalry comp from a cloned style: bind slots, denormalize stored ratios to the requested duration/size and execute the rig in ONE atomic /batch-step. Returns the compId and a PNG at hero time 0.5.",
+      inputSchema: z.strictObject({
+        style_id: z.string().max(64).describe("Cloned style id from list_cloned_styles."),
+        comp_name: z.string().max(128).optional().describe("New composition name; defaults to a unique Cloned <style> name."),
+        duration_sec: z.number().positive().max(300).optional().describe("Target duration in seconds (default: preset duration)."),
+        fps: z.number().int().min(1).max(120).optional().describe("Target frame rate (default: preset fps)."),
+        width: z.number().int().min(16).max(8192).optional().describe("Target comp width (default: preset width). Ratios scale to it."),
+        height: z.number().int().min(16).max(8192).optional().describe("Target comp height (default: preset height). Ratios scale to it."),
+        slots: z.record(z.string().max(64), z.unknown()).optional().describe("Slot values: headline, subhead, cta_text, text_N, bg_color, primary_color, accent_color, text_color, logo_svg, media_N, items[]."),
+      }),
     },
     async args => {
       try {
@@ -124,7 +131,9 @@ export function registerClonedTools(server: McpServer): void {
         const meta = hydrated.meta;
         const compName = String(args.comp_name ?? "").trim()
           || `Cloned ${styleId} ${new Date().toISOString().replace(/[:.]/g, "-")}`;
-        const renderDir = clonedPreviewDir(styleId).replace(/\\/g, "/");
+        // Derived from the traversal-safe style id, then double-checked
+        // against the sandbox roots.
+        const renderDir = resolveSandboxedPath(clonedPreviewDir(styleId), clonedPreviewDir(styleId), "renderDir");
 
         // The manifest is compiled into the SAME script that creates the comp:
         // batch-step applies dslManifest before user script, so a separate
@@ -204,14 +213,17 @@ export function registerClonedTools(server: McpServer): void {
     },
   );
 
-  server.tool(
+  server.registerTool(
     "sync_active_comp_to_cloned_style",
-    "Save manual rig tweaks from a live Cavalry comp into a cloned style preset: export spring/oscillator/stagger/colors/font sizes, re-normalize frame values, write rig_overrides, font sizes and unanimous palette defaults. Read-only on the scene; dry_run previews without writing.",
     {
-      style_id: z.string().describe("Cloned style id the comp was instantiated from."),
-      comp_id: z.string().optional().describe("Comp to read; defaults to the active comp."),
-      layer_ids: z.array(z.string()).max(200).optional().describe("Restrict the read to these layer ids (default: all comp layers, capped at 200)."),
-      dry_run: z.boolean().optional().describe("Report the diff without writing the preset."),
+      description:
+        "Save manual rig tweaks from a live Cavalry comp into a cloned style preset: export spring/oscillator/stagger/colors/font sizes, re-normalize frame values, write rig_overrides, font sizes and unanimous palette defaults. Read-only on the scene; dry_run previews without writing.",
+      inputSchema: z.strictObject({
+        style_id: z.string().max(64).describe("Cloned style id the comp was instantiated from."),
+        comp_id: z.string().max(128).optional().describe("Comp to read; defaults to the active comp."),
+        layer_ids: z.array(z.string().max(128)).max(200).optional().describe("Restrict the read to these layer ids (default: all comp layers, capped at 200)."),
+        dry_run: z.boolean().optional().describe("Report the diff without writing the preset."),
+      }),
     },
     async args => {
       try {

@@ -147,6 +147,29 @@ export const MG_EASING_SOURCE = String.raw`  kf(id, attr, framesAndValues, magic
   },
 
   /**
+   * Idempotency probe for _mg.ease: the attribute already carries EXACTLY the
+   * two boundary keyframes this call would write (and, when readable, the same
+   * magic easing), so a retry or incremental patch can skip the write instead
+   * of stacking duplicate keys.
+   */
+  __easeMatches(id, attrs, start, outFrame, name) {
+    for (let i = 0; i < attrs.length; i++) {
+      let times = null;
+      try { times = (api.getKeyframeTimes(id, attrs[i]) || []).slice().sort(function (a, b) { return a - b; }); } catch (e) { return false; }
+      if (!times || times.length !== 2 || Math.round(Number(times[0])) !== start || Math.round(Number(times[1])) !== outFrame) return false;
+      if (name && typeof api.getMagicEasing === "function") {
+        try {
+          const current = api.getMagicEasing(id, attrs[i], start);
+          // Hosts answer with either a curve name or { easingName, expression }.
+          const currentName = current && typeof current === "object" ? current.easingName : current;
+          if (currentName && String(currentName) !== "Custom" && String(currentName) !== String(name)) return false;
+        } catch (e) {}
+      }
+    }
+    return true;
+  },
+
+  /**
    * Two boundary keyframes plus a supported magic-easing curve.
    *
    * spec = { inFrame, outFrame, from, to, magicEasing?, easing?, bezier?,
@@ -180,10 +203,15 @@ export const MG_EASING_SOURCE = String.raw`  kf(id, attr, framesAndValues, magic
       && (spec.stiffness != null || spec.damping != null || spec.overshoot != null) ? spec : null);
     const resolved = name ? this.__easeName(name) : (rigSpec ? this.rig(rigSpec).easing : this.__nearestEase(handles));
     const attrs = attr === "position" || attr === "scale" ? [attr + ".x", attr + ".y"] : [attr];
+    // Idempotency: identical boundary keyframes already present — report and
+    // skip instead of rewriting (a retry is a no-op, not a duplicate pass).
+    if (spec.force !== true && this.__easeMatches(id, attrs, start, outFrame, resolved)) {
+      return { id: id, attrs: attrs, easing: resolved, inFrame: start, outFrame: outFrame, holdFrames: hold, reused: true };
+    }
     for (let i = 0; i < attrs.length; i++) {
       _rb.kf(id, attrs[i], [[start, from], [outFrame, to]], resolved);
     }
-    return { id: id, attrs: attrs, easing: resolved, inFrame: start, outFrame: outFrame, holdFrames: hold };
+    return { id: id, attrs: attrs, easing: resolved, inFrame: start, outFrame: outFrame, holdFrames: hold, reused: false };
   },
 
   /**
@@ -208,6 +236,17 @@ export const MG_EASING_SOURCE = String.raw`  kf(id, attr, framesAndValues, magic
     if (!(delay >= 1)) throw new Error("_mg.stagger delayFrames must be at least 1");
     const inFrame = Math.round(Number(spec.inFrame));
     const outFrame = Math.round(Number(spec.outFrame));
+    // Idempotency: the exact same stagger spec over the same layer set is
+    // marked on globalThis as a deterministic metadata tag, so a retry (or an
+    // incremental patch replaying the same step) no-ops instead of offsetting
+    // every boundary a second time. force:true re-applies deliberately.
+    let marks = {};
+    try { marks = globalThis.__mgStaggerMarks || (globalThis.__mgStaggerMarks = {}); } catch (e) {}
+    const markKey = list.join("|");
+    const mark = JSON.stringify([spec.attr, inFrame, outFrame, spec.from, spec.to, delay, spec.magicEasing || null, spec.easing || null, spec.bezier || null]);
+    if (spec.force !== true && marks[markKey] === mark) {
+      return { ids: list, attr: spec.attr, delayFrames: delay, staggerOffset: delay, applied: [], reused: true };
+    }
     const applied = [];
     for (let i = 0; i < list.length; i++) {
       const offset = i * delay;
@@ -218,7 +257,8 @@ export const MG_EASING_SOURCE = String.raw`  kf(id, attr, framesAndValues, magic
       });
       applied.push({ id: list[i], inFrame: inFrame + offset, outFrame: outFrame + offset });
     }
-    return { ids: list, attr: spec.attr, delayFrames: delay, staggerOffset: delay, applied: applied };
+    try { marks[markKey] = mark; } catch (e) {}
+    return { ids: list, attr: spec.attr, delayFrames: delay, staggerOffset: delay, applied: applied, reused: false };
   },
 
   /**

@@ -44,6 +44,7 @@ test("default MCP surface is the compact promoted tool set", async () => {
   assert.deepEqual(listed.tools.map(tool => tool.name).sort(), [
     "cavalry_apply_dsl",
     "cavalry_batch",
+    "cavalry_discover_presets",
     "cavalry_doctor",
     "cavalry_inspect",
     "cavalry_inspect_compact",

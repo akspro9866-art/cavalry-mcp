@@ -1,6 +1,38 @@
 /** SVG import, viewBox handling and path parsing. Verbatim chunk of the injected _mg DSL; mg_helpers.ts concatenates these in order. */
-export const MG_SVG_SOURCE = String.raw`  svg(parent, spec) {
+export const MG_SVG_SOURCE = String.raw`  /**
+   * Deterministic named-layer lookup for idempotent primitives: match an
+   * existing comp layer by its nice name so a retry or incremental patch can
+   * reuse a layer created by an earlier run instead of duplicating it.
+   */
+  __findNamedLayer(name) {
+    let ids = [];
+    try { ids = api.getCompLayers(false) || []; } catch (e) { return null; }
+    for (let i = 0; i < ids.length; i++) {
+      let nice = "";
+      try { nice = typeof api.getNiceName === "function" ? String(api.getNiceName(ids[i]) || "") : String(api.get(ids[i], "name") || ""); } catch (e) {}
+      if (nice === String(name)) return ids[i];
+    }
+    return null;
+  },
+
+  svg(parent, spec) {
     spec = spec || {};
+    // Idempotency: a named svg import that already exists is mutated in place
+    // (position/scale/parent) instead of creating a duplicate layer.
+    if (spec.name && spec.reuse !== false) {
+      const existing = this.__findNamedLayer(String(spec.name));
+      if (existing != null) {
+        if (parent != null && parent !== existing) {
+          try {
+            if (String(parent) !== String(api.getActiveComp())) api.parent(existing, parent);
+          } catch (e) {}
+        }
+        if (spec.pos) this.set(existing, { position: { x: Number(spec.pos.x) || 0, y: Number(spec.pos.y) || 0 } });
+        if (spec.scale != null) this.set(existing, { scale: Number(spec.scale) || 1 });
+        if (spec.report) return { id: existing, reused: true, name: String(spec.name) };
+        return existing;
+      }
+    }
     let id = null;
     let meta = null;
     if (spec.path) {
@@ -29,7 +61,7 @@ export const MG_SVG_SOURCE = String.raw`  svg(parent, spec) {
     if (spec.pos) this.set(id, { position: { x: Number(spec.pos.x) || 0, y: Number(spec.pos.y) || 0 } });
     if (spec.scale != null) this.set(id, { scale: Number(spec.scale) || 1 });
     if (spec.report) {
-      const outcome = { id: id };
+      const outcome = { id: id, reused: false };
       const keys = Object.keys(meta);
       for (let k = 0; k < keys.length; k++) outcome[keys[k]] = meta[keys[k]];
       return outcome;

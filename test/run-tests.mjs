@@ -24,6 +24,12 @@ function collect(directory) {
 // --live runs only the existing real-sibling refclone integration. There is
 // no separate live Cavalry scene suite; all other tests use mocks/local files.
 const live = process.argv.includes("--live");
+// Explicit live-Cavalry opt-in: --live without CAVALRY_LIVE=true skips all
+// suites with a message instead of reaching for a real sibling bridge.
+if (live && process.env.CAVALRY_LIVE !== "true") {
+  console.log("Live test run skipped: CAVALRY_LIVE !== \"true\" (set the env var, or run the dedicated workflow_dispatch job).");
+  process.exit(0);
+}
 const files = live ? [path.join(here, "server", "strict.test.ts")] : collect(here).sort();
 const watch = process.argv.includes("--watch");
 const env = { ...process.env, CAVALRY_TEST_LIVE: live ? "1" : "0" };
