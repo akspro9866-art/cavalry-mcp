@@ -139,7 +139,7 @@ test("aliases: legacy ids resolve and compile with translated parameters", () =>
   assert.match(sheet, /"count":\[1,1\]/);
 });
 
-test("compile: defaults and typed overrides produce parseable scripts for all 120", () => {
+test("compile: defaults and typed overrides produce parseable scripts for all 146", () => {
   for (const def of PRESET_DEFS) {
     const defaultCode = compilePreset(def.id, {});
     assert.ok(defaultCode.includes(`preset: "${def.id}"`), `${def.id} return tag`);

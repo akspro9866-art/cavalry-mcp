@@ -4,7 +4,7 @@ import { listPresets, searchPresets, resolvePreset, PRESET_DEFS } from "../src/p
 
 describe("cavalry-mcp: presets library tests", () => {
   test("preset definitions cover the full catalog", () => {
-    assert.ok(PRESET_DEFS.length >= 120, `expected >= 120 presets, found ${PRESET_DEFS.length}`);
+    assert.ok(PRESET_DEFS.length >= 146, `expected >= 146 presets, found ${PRESET_DEFS.length}`);
     const list = listPresets();
     assert.equal(list.length, PRESET_DEFS.length);
   });

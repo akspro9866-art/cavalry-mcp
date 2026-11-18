@@ -17,7 +17,7 @@
  * The interpreter is deliberately dependency-light: it only assumes `_mg`
  * (shape/layer/text/alias/fitToBounds) and the raw `api` surface. The `_rb`
  * rig builders are *not* used here — preset expansion happens client-side in
- * `compileMgDsl`/`resolvePreset`, which can read the 120-preset library.
+ * `compileMgDsl`/`resolvePreset`, which can read the 146-preset library.
  */
 
 /** Declarative `_mg` manifest accepted by stallion `/batch-step` and `compileMgDsl`. */

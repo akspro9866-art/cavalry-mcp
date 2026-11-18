@@ -1,7 +1,7 @@
 /**
  * Direct-import library surface (`cavalry-mcp/lib`).
  *
- * refclone imports the `_mg` compiler and the 120-preset library from here as
+ * refclone imports the `_mg` compiler and the 146-preset library from here as
  * a local package — no MCP stdio JSON-RPC, no bridge round trip, no tool
  * schema. Everything exported from this module is PURE: string/JSON in,
  * string/JSON out. Nothing here may import the MCP SDK, zod, `node:fs` or any
@@ -14,7 +14,7 @@
  *     Cavalry JS body (same manifest stallion's `/batch-step` accepts as
  *     `dslManifest`, interpreted by the same `MG_MANIFEST_RUNTIME`).
  *   - `searchPresets(query, cat)`   — bounded keyword search over the
- *     120-preset library; keeps the catalog out of system prompts.
+ *     146-preset library; keeps the catalog out of system prompts.
  *   - `resolvePreset(presetId, params)` — one preset → executable script body.
  *   - `serializeCompactTsv(layers)` — readback layers → the compact TSV the
  *     bridge uses for `compactDomTsv`, byte-identical column order.

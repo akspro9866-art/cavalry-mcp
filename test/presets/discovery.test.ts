@@ -12,7 +12,7 @@ import { queryDiscoveryIndex, loadDiscoveryIndex, clearDiscoveryIndexCache } fro
 
 test("the discovery index loads and covers the full preset library", async () => {
   const entries = await loadDiscoveryIndex();
-  assert.ok(entries.length >= 120, `at least the 120 SaaS presets are indexed (got ${entries.length})`);
+  assert.ok(entries.length >= 146, `at least the 146 SaaS presets are indexed (got ${entries.length})`);
   const ids = new Set(entries.map((entry) => entry.id));
   assert.equal(ids.size, entries.length, "preset ids are unique");
   for (const entry of entries.slice(0, 25)) {
@@ -26,7 +26,7 @@ test("the discovery index loads and covers the full preset library", async () =>
 
 test("queryDiscoveryIndex returns signatures and required params — never code", async () => {
   const result = await queryDiscoveryIndex({ query: "counter", limit: 10 });
-  assert.ok(result.total >= 120);
+  assert.ok(result.total >= 146);
   assert.ok(result.matched >= 1, "counter presets exist");
   for (const preset of result.presets) {
     for (const key of Object.keys(preset)) {
@@ -71,6 +71,6 @@ test("a nonsense query matches nothing", async () => {
 test("clearDiscoveryIndexCache forces a reload", async () => {
   clearDiscoveryIndexCache();
   const entries = await loadDiscoveryIndex();
-  assert.ok(entries.length >= 120);
+  assert.ok(entries.length >= 146);
   clearDiscoveryIndexCache();
 });

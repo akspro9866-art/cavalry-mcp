@@ -1,7 +1,7 @@
 /**
  * Low-token preset discovery index.
  *
- * A precomputed, lightweight index over the 120 procedural SaaS presets (14
+ * A precomputed, lightweight index over the 146 procedural SaaS presets (16
  * category packs — plus the procedural/card packs) mapping preset ID,
  * category, motion tags and compact parameter signatures. The MCP lookup
  * query returns ONLY matching signatures and required parameters — never the

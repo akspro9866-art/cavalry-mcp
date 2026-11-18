@@ -88,7 +88,7 @@ test("Pattern A: ASTRYX_THEMES exports all 7 SaaS palettes and _mg.applySceneThe
   assert.equal(resolveAstryxTheme("UNKNOWN").themeName, "neutral");
 });
 
-test("Pattern B: AGENTS.md contains 120-line preset catalog + rule, and lazy .doc.mjs files stay <= 110 tokens", async () => {
+test("Pattern B: AGENTS.md contains 146-line preset catalog + rule, and lazy .doc.mjs files stay <= 110 tokens", async () => {
   const agentsPath = path.join(root, "AGENTS.md");
   assert.ok(existsSync(agentsPath), "AGENTS.md exists at repo root");
   const agentsMd = readFileSync(agentsPath, "utf8");

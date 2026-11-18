@@ -74,7 +74,7 @@ export function registerPresetsTool(server: McpServer): void {
   server.registerTool(
     "cavalry_presets",
     {
-      description: "Query, search, and parameterize presets from the 120-preset SaaS library.",
+      description: "Query, search, and parameterize presets from the 146-preset SaaS library.",
       inputSchema: PresetsInputSchema,
     },
     async (args) => {

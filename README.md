@@ -6,7 +6,7 @@
 
 Low-token [Cavalry](https://cavalry.scenegroup.co) automation through
 [Stallion](https://github.com/akspro9866-art/stallion). Build whole motion rigs in one atomic
-script, call one of 120 procedural presets, or bypass MCP schemas entirely with the bundled CLI.
+script, call one of 146 procedural presets, or bypass MCP schemas entirely with the bundled CLI.
 
 ```
 Agent / IDE  <--MCP stdio / CLI-->  cavalry-mcp  <--HTTP-->  Stallion  <--->  Cavalry 2.8
@@ -32,7 +32,7 @@ This repository is the middle layer of a three-part stack:
 
 cavalry-mcp turns an MCP client or a plain terminal into a motion designer:
 one schema-checked call builds a whole rig in a single atomic Undo group,
-120 procedural presets cover the common motion vocabulary, and the
+146 procedural presets cover the common motion vocabulary, and the
 render/verify/readback loops return pixels and geometry instead of making
 the agent pay a one-second round trip per attribute.
 
@@ -246,7 +246,7 @@ The per-frame sample is evaluated telemetry, not a keyframe listing. It tells yo
 }
 ```
 
-`name` is constrained to the 120 shipped preset ids. `params` is optional; each preset runs
+`name` is constrained to the 146 shipped preset ids. `params` is optional; each preset runs
 with its declared defaults when it is omitted. Parameter keys are checked against that preset's
 declared parameters — an unknown key is reported instead of silently ignored.
 
@@ -524,7 +524,7 @@ an `@alias`, a semantic id or a slug; the resolved live id is reported.
 
 ## Procedural presets
 
-The registry ships **120 presets across 14 category packs** — a self-contained SaaS
+The registry ships **146 presets across 16 category packs** — a self-contained SaaS
 motion-graphics library. Every preset is an isolated IIFE inside its own Undo group, with
 `try/finally`. It returns a map of role → layer id plus `preset: "<id>"`, so you can keep
 animating the pieces it built.
@@ -546,7 +546,7 @@ animating the pieces it built.
 | 13 | `onboarding_plg` | Onboarding & Product-Led Growth | 10 |
 | 14 | `social_proof_cta` | Social Proof & Call-to-Action | 10 |
 
-Presets are stored as category packs in `src/presets/packs/cat01…cat14` and composed from
+Presets are stored as category packs in `src/presets/packs/cat01…cat16` and composed from
 shared `_rb` factories in `src/presets/rig_builders.ts`. Every preset accepts `{}` and runs with
 its declared defaults. Parameters declare the types `string`, `int`, `double`, `bool`, `color`
 (hex string) and `json` (object or array).
@@ -715,7 +715,7 @@ The suite runs the real server against an in-memory MCP client and a mock Stalli
 server that executes scripts in a `node:vm` sandbox with a modelled `api`. Bridge behaviour —
 seq matching, the write-failure retry, queue serialization, timeouts, the friendly connection
 error — is therefore covered without Cavalry installed. `test/presets/library.test.ts` compiles and
-executes all 120 presets with defaults and typed overrides against the same mock. Theme,
+executes all 146 presets with defaults and typed overrides against the same mock. Theme,
 telemetry, render-chunking, verify, probe and MCP schema tests run in the same suite.
 
 CI runs `npm ci`, `npm run build` and `npm test` on Ubuntu and Windows with Node 20, 22 and 24.
@@ -769,7 +769,7 @@ src/
     cavalry_snippets.ts  compilePreset, listPresets, PRESET_NAMES
     rig_builders.ts      shared `_rb` factories
     manifest.ts          preset manifest builder
-    packs/cat01…cat14    the 120 presets
+    packs/cat01…cat16    the 146 presets
 bin/stallion-cli.mjs   the zero-MCP CLI
 scripts/               build-time preset manifest
 types/cavalry.d.ts     API and `_mg` TypeScript declarations

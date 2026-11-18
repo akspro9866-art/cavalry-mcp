@@ -4,7 +4,7 @@
  *
  *   - `cavalry_exec_mg`      — validate + normalize a `_mg` manifest, execute
  *                              it in ONE /batch-step round trip.
- *   - `cavalry_query_presets`— bounded keyword search across the 120-preset
+ *   - `cavalry_query_presets`— bounded keyword search across the 146-preset
  *                              library with signatures and required params.
  *   - `cavalry_inspect_rig`  — stallion `/batch_inspect`: compact hierarchy +
  *                              bounding-box trajectory summary, geometry only.
@@ -157,7 +157,7 @@ export function registerStrictTools(server: McpServer): void {
     "cavalry_query_presets",
     {
       description:
-        "Keyword-filter the 120-preset procedural library (14 category packs) and return compact preset signatures: id, motion signature, required parameters, defaults. Always query before invoking a preset in cavalry_exec_mg — the catalog is never listed inline.",
+        "Keyword-filter the 146-preset procedural library (16 category packs) and return compact preset signatures: id, motion signature, required parameters, defaults. Always query before invoking a preset in cavalry_exec_mg — the catalog is never listed inline.",
       inputSchema: z.strictObject({
         query: z.string().max(256).optional().describe('Space-separated keywords; every word must match (AND). Examples: "counter spring", "progress bar", "stagger".'),
         category: z.string().max(64).optional().describe("Category filter: id, index (1-14) or label fragment."),

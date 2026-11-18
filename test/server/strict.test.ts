@@ -86,7 +86,7 @@ test("cavalry_exec_mg rejects an unknown preset id with top-3 suggestions", asyn
 test("cavalry_query_presets returns compact signatures with required params", async () => {
   const result = await call("cavalry_query_presets", { query: "counter" });
   const body = payload(result);
-  assert.ok(Number(body.total) >= 120);
+  assert.ok(Number(body.total) >= 146);
   assert.ok(Number(body.matched) >= 1);
   const first = (body.presets as Array<Record<string, unknown>>)[0];
   assert.ok(first.id && typeof first.motionSignature === "string");

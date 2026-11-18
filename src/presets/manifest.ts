@@ -1,7 +1,7 @@
 /**
  * Ultra-compact preset index for refclone's deterministic Stage 3 matcher.
  *
- * The MCP catalog itself is 120 executable scripts; sending it to a model — or
+ * The MCP catalog itself is 146 executable scripts; sending it to a model — or
  * even loading it in a refinement loop — costs tens of thousands of tokens. The
  * manifest keeps only the five facts a matcher needs, in a length-prefixed
  * string per preset so repeated JSON keys do not dominate the payload:
@@ -297,7 +297,7 @@ export function estimatePresetManifestTokens(json: string): number {
 export const PRESET_CATALOG_AGENT_RULE =
   "Browse the preset catalog first before writing _mg code. Never use raw api.create/api.set when an _mg preset exists.";
 
-/** Build all 120 1-line catalog entries (`id | category | requiredParams | 8-word summary`). */
+/** Build all 146 1-line catalog entries (`id | category | requiredParams | 8-word summary`). */
 export function buildCompactPresetCatalogLines(): string[] {
   return PRESET_DEFS.map((def) => formatCompactPresetLine(def));
 }
@@ -306,7 +306,7 @@ const COMPACT_DOC_BY_ID = new Map<string, CompactPresetDoc>();
 
 /**
  * Resolve a single preset (`{ presetId }`) lazily from the compact index
- * without loading all 120 full schemas into the prompt context.
+ * without loading all 146 full schemas into the prompt context.
  */
 export function lookupPresetCompact(
   presetId: string,

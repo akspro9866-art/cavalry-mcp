@@ -51,7 +51,7 @@ export interface PresetPack {
 
 export const PRESET_PACKS: PresetPack[] = PRESET_CATEGORIES
   // Dynamic categories (cloned styles) are a runtime filesystem registry, not
-  // part of the static 120-script library this surface describes.
+  // part of the static 146-script library this surface describes.
   .filter(category => category.presets !== "dynamic")
   .map(category => ({
     id: category.id,

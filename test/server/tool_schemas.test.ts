@@ -41,7 +41,7 @@ function buildServer(crud: boolean): McpServer {
       "cavalry_run_preset",
       "Build a parameterized procedural motion rig in one atomic Cavalry execution.",
       {
-        name: z.enum(PRESET_NAMES).describe("Preset id from the 120-preset library"),
+        name: z.enum(PRESET_NAMES).describe("Preset id from the 146-preset library"),
         params: z.record(z.string(), z.unknown()).optional().describe("Preset parameters keyed by each preset's declared argument names"),
       },
       async () => ({ content: [{ type: "text" as const, text: "ok" }] }),

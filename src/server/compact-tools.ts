@@ -6,7 +6,7 @@
  *   - scene state never returns as a JSON DOM dump — `cavalry_inspect_compact`
  *     serializes the readback into the line-per-layer TSV the bridge itself
  *     uses for `compactDomTsv`;
- *   - the 120-preset catalog never enters a system prompt —
+ *   - the 146-preset catalog never enters a system prompt —
  *     `cavalry_search_presets` returns bounded metadata for a keyword query;
  *   - scene construction is declarative — `cavalry_apply_dsl` executes a
  *     `_mg` manifest (plus optional preset invocations) through ONE
@@ -164,7 +164,7 @@ export function registerCompactTools(server: McpServer): void {
     "cavalry_search_presets",
     {
       description:
-        "Search the 120-preset procedural library by keyword, motion tag (pop/slide/stagger/count/wave/…) or easing family (spring/overshoot/linear), or resolve an exact presetId from the compact index without loading all 120 full schemas.",
+        "Search the 146-preset procedural library by keyword, motion tag (pop/slide/stagger/count/wave/…) or easing family (spring/overshoot/linear), or resolve an exact presetId from the compact index without loading all 146 full schemas.",
       inputSchema: z.strictObject({
         query: z.string().max(256).optional().describe('Space-separated keywords; every word must match (AND). Examples: "counter", "card spring", "progress bar".'),
         category: z.string().max(128).optional().describe("Category filter: id (typography), index (1-14) or label fragment (e.g. \"fintech\")."),

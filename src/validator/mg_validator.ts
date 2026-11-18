@@ -14,7 +14,7 @@
  *      reported instead of guessed at.
  *
  * Preset ids referenced by a manifest's `presets` array are validated against
- * the 14 category packs; a near miss auto-resolves (alias table first, then a
+ * the 16 category packs; a near miss auto-resolves (alias table first, then a
  * bounded edit-distance match), and a real miss returns the top 3 candidates
  * so the caller can correct course in one turn.
  *
@@ -282,7 +282,7 @@ function normalizePresetInvocations(
     const near = fuzzyMatchPresets(raw, 3);
     const hint = near.length
       ? ` Closest preset ids: ${near.map((hit) => `'${hit.id}'`).join(", ")}.`
-      : ` ${PRESET_DEFS.length} presets exist across 14 category packs; discover ids with cavalry_query_presets or cavalry_search_presets.`;
+      : ` ${PRESET_DEFS.length} presets exist across 16 category packs; discover ids with cavalry_query_presets or cavalry_search_presets.`;
     errors.push(`presets[${index}].id: unknown preset '${raw}'.${hint}`);
   }
   return out;

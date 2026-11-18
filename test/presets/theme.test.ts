@@ -129,7 +129,7 @@ test("a preset compiled after applyTheme uses the new palette", () => {
   assert.equal(fill.b, 170);
 });
 
-test("theme is inert for all 120 presets until applyTheme is called", () => {
+test("theme is inert for all 146 presets until applyTheme is called", () => {
   const scripts = PRESET_DEFS.map((def) => `(function () {\n${compilePreset(def.id, {})}\n})();`).join("\n");
   const { result, state } = run(`
     _mg.applyTheme({ colors: { primary: "#FF00AA" }, palette: false, apply: false });
