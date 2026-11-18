@@ -101,7 +101,10 @@ test("listing/signatures never load refclone; inspect and compile forward exact 
     assert.equal(payload(await session.call("refclone_compile_and_converge", compilationArgs)).converged, true);
     assert.deepEqual(calls, [["inspect", inspectionArgs], ["compile", compilationArgs]]);
     assert.equal(loads, 2);
-    const escapeAttempt = { videoPath: "x", outputDir: "C:/out" };
+    // Windows absolute paths are outside the sandbox only on win32; on POSIX
+    // drive-looking strings resolve inside cwd, so use a POSIX absolute path.
+    const escapePath = process.platform === "win32" ? "C:/out" : "/etc/refclone-escape";
+    const escapeAttempt = { videoPath: "x", outputDir: escapePath };
     const escaped = await session.call("refclone_inspect_reference", escapeAttempt);
     assert.equal(escaped.isError, true);
     const escapeText = escaped.content.map(item => item.text ?? "").join("\n");

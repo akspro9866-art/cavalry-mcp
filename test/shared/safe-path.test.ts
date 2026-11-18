@@ -28,7 +28,14 @@ test("paths under ~/.cavalry-mcp and the OS temp directory are allowed", () => {
 
 test("traversal outside the sandbox is rejected", () => {
   assert.throws(() => resolveSandboxedPath("../../../../etc/passwd", "x", "outDir"), /escapes the allowed sandbox/);
-  assert.throws(() => resolveSandboxedPath("C:\\Windows\\System32\\config", "x", "outDir"), /escapes the allowed sandbox/);
+  // The absolute-path-outside-the-sandbox case is platform-specific: a raw
+  // "C:\..." string is a drive path only on win32; on POSIX it resolves
+  // inside the cwd sandbox instead.
+  if (process.platform === "win32") {
+    assert.throws(() => resolveSandboxedPath("C:\\Windows\\System32\\config", "x", "outDir"), /escapes the allowed sandbox/);
+  } else {
+    assert.throws(() => resolveSandboxedPath("/etc/passwd", "x", "outDir"), /escapes the allowed sandbox/);
+  }
 });
 
 test("UNC, drive-root and NUL byte inputs are rejected outright", () => {
