@@ -91,7 +91,6 @@ even when Cavalry is not running:
 - [Zero-MCP CLI](#zero-mcp-cli)
 - [Execution state and telemetry](#execution-state-and-telemetry)
 - [Environment variables](#environment-variables)
-- [Legacy tools](#legacy-tools-enable_legacy_toolstrue)
 - [Tips and known behaviour](#tips-and-known-behaviour)
 - [Development](#development)
 - [Repository layout](#repository-layout)
@@ -173,9 +172,16 @@ except the MCP protocol stream; diagnostics go to stderr.
 
 ## Core tools
 
-Eight tools are exposed by default. They are intentionally few: every additional schema is
-context the model pays for on every turn, and every additional round trip costs about a second
-of bridge latency.
+Which tools the server exposes is selected by `MCP_MODE`:
+
+| `MCP_MODE` | Tools | Intended use |
+|---|---|---|
+| *(unset)* | **compact surface** — `cavalry_apply_dsl`, `cavalry_search_presets`, `cavalry_discover_presets`, `cavalry_inspect_compact`, plus `list_cloned_styles`, `instantiate_cloned_style`, `sync_active_comp_to_cloned_style` (7 tools) | low-token clients; the declarative `_mg` DSL |
+| `interactive_authoring` | compact surface **plus** the classic authoring tools below: `cavalry_run_script`, `cavalry_inspect`, `cavalry_run_preset`, `cavalry_batch`, `cavalry_verify_frames`, `cavalry_render_frames`, `cavalry_probe_api`, `cavalry_doctor` (15 tools) | interactive use from an MCP client / IDE |
+| `refclone_strict` | `refclone_inspect_reference`, `refclone_get_preset_signatures`, `refclone_compile_and_converge` | the refclone evidence-gated pipeline |
+
+They are intentionally few: every additional schema is context the model pays for on every
+turn, and every additional round trip costs about a second of bridge latency.
 
 | Tool | Purpose |
 |---|---|
@@ -187,9 +193,6 @@ of bridge latency.
 | `cavalry_render_frames` | render a whole range in deadline-sized, resumable chunks |
 | `cavalry_probe_api` | ask the live build which functions, types and attributes actually exist |
 | `cavalry_doctor` | one-shot diagnosis of bridge, runtime, binaries and workspace |
-
-Set `ENABLE_LEGACY_TOOLS=true` to add the original 44 granular tools described
-[below](#legacy-tools-enable_legacy_toolstrue).
 
 ### `cavalry_run_script`
 
@@ -662,77 +665,23 @@ All are optional.
 | `CAVALRY_EXPECTED_VERSION` | `2.8` | the Cavalry minor `cavalry_doctor` compares against |
 | `FFMPEG_PATH` | `ffmpeg` | ffmpeg binary for beats and promo encoding |
 | `FFPROBE_PATH` | `ffprobe` | ffprobe binary used by `cavalry_doctor` |
-| `ENABLE_LEGACY_TOOLS` | `false` | register the original 44 granular MCP tools |
+| `MCP_MODE` | *(unset)* | tool surface: `interactive_authoring` (classic + compact, 15 tools), `refclone_strict` (3-tool refclone pipeline); unset = compact surface (7 tools) |
 
-## Legacy tools (`ENABLE_LEGACY_TOOLS=true`)
+## Removed: legacy granular tools
 
-The original surface remains available for existing clients. It is off by default to keep MCP
-schema tokens and round trips down. All 44 tools run through the same atomic wrapper and the
-same state capture.
 
-### Scene building and data
 
-| Tool | Notes |
-|---|---|
-| `cavalry_ping` | reachability check plus Cavalry version |
-| `cavalry_run_script` | arbitrary JS; assign `__result` or use `return` to send data back |
-| `cavalry_create_layer` | returns the new layer id, e.g. `textShape#3` |
-| `cavalry_set_attribute` | `{"material.materialColor": "#101828"}`, `{"generator.dimensions": [1920, 1080]}` |
-| `cavalry_get_attribute` | returns the value |
-| `cavalry_connect` | connect one attribute to another (the single-operation form of the batch `connect`) |
-| `cavalry_get_scene_layers` / `cavalry_get_selected_layers` | structured JSON: id, type, name, visible, selected, position, in/out, parent |
-| `cavalry_list_attributes` | every attribute path on a layer, optionally with definitions |
-| `cavalry_get_connections` | incoming connections per attribute plus outgoing connections per attribute and id |
-| `cavalry_select_layers` / `cavalry_delete_layers` | delete verifies what was actually removed |
-| `cavalry_duplicate_layer` | `api.duplicate`, keeps your selection |
-| `cavalry_rename_layer` | rename in place |
-| `cavalry_layer_order` | z-order without a second layer id: `forward` / `front` / `backward` / `back`, selection-safe |
-| `cavalry_get_bounding_box` | local (default) or world space |
-| `cavalry_import_asset` | image/sequence/video/audio → asset and layer ids |
-| `cavalry_add_dynamic_attribute` | add a dynamic attribute to a layer |
-| `cavalry_layer_types` | every layer type in this build (`[{type, name}]`, including experimental on request) |
-| `cavalry_transform` | `reset` / `freeze` / `centrePivot` |
+The pre-v3.4 granular surface (44 per-attribute tools: `cavalry_create_layer`,
 
-### Animation
+`cavalry_keyframe`, `cavalry_render_png`, ...) has been removed and
 
-| Tool | Notes |
-|---|---|
-| `cavalry_keyframe` | one keyframe **or a whole curve** (`keyframes: [{frame, attributes}]`) in one call |
-| `cavalry_keyframe_edit` | delete keys at frames, wipe an attribute's (or a layer's) animation, set/clear per-keyframe velocity |
-| `cavalry_magic_easing` | schema-validated enum of the 20 real easing names; `expression` is accepted with `Custom`/`None` only |
-| `cavalry_get_keyframes` | keyframe frames per attribute |
-| `cavalry_animate_in` | presets in one call: `fadeIn`, `fadeUp`, `springUp`, `slideInLeft`, `popIn`, `dropBounce` |
-| `cavalry_expression` | set or read a per-attribute JavaScript expression |
+`ENABLE_LEGACY_TOOLS` has no effect. The `interactive_authoring` surface covers the same
 
-### Style and colour
+workflows with far fewer schemas; the original implementation remains available in git
 
-| Tool | Notes |
-|---|---|
-| `cavalry_gradient` | one-call gradient from hex stops (`setGradientFromColors`) |
-| `cavalry_generate_palette` | harmonious palettes: monochromatic, analogous, complementary, triadic, goldenRatio, … |
+history.
 
-### Composition and timing
 
-| Tool | Notes |
-|---|---|
-| `cavalry_get_composition_info` | resolution, fps, frame range, current frame |
-| `cavalry_set_composition_info` | width/height, fps, inFrame/outFrame |
-| `cavalry_compositions` | list/create/set-active comps, list a comp's layers, preCompose, new scene (confirm-gated) |
-| `cavalry_set_current_frame` / `cavalry_get_current_frame` | playhead control |
-| `cavalry_playback` | play/stop the timeline so the user can watch |
-| `cavalry_set_layer_timing` | trim in/out points or slide a layer by N frames |
-| `cavalry_reorder_layer` / `cavalry_set_parent` | stack order and hierarchy |
-
-### Render and export
-
-| Tool | Notes |
-|---|---|
-| `cavalry_render_png` | renders and returns the image inline (`returnImage: false` to skip) |
-| `cavalry_render_filmstrip` | N frames across the timeline → one contact sheet image |
-| `cavalry_render_video` | starts a background render-queue video render of the active comp |
-| `cavalry_get_render_queue` / `cavalry_cancel_render` | manage renders |
-| `cavalry_save_scene` / `cavalry_open_scene` | Save As verified by watching the file on disk |
-| `cavalry_undo` | experimental, feature-detected; a clear error if this build lacks it |
 
 ## Tips and known behaviour
 
@@ -784,13 +733,17 @@ Useful scripts:
 
 ```
 src/
-  index.ts             MCP server, core registration, legacy gate
+  index.ts             MCP server, mode selection (MCP_MODE) and registration
   server/
-    core-tools.ts      core MCP tools: batch, verify, render, probe, doctor
-    legacy/
-      index.ts         the 44 opt-in granular tools
-      animate-presets.ts  one-call animation presets for cavalry_animate_in
-      filmstrip.ts     PNG contact sheets for the legacy preview tools
+    compact-tools.ts   the default low-token tool surface (apply/search/discover/inspect)
+    cloned-tools.ts    cloned-style tools (list/instantiate/sync)
+    core-tools.ts      interactive_authoring tools: batch, verify, render, probe, doctor
+    strict-tools.ts    refclone_strict artifacts
+    refclone-tools.ts  refclone_strict 3-tool pipeline (lazy-loads refclone)
+    cloned.ts          cloned-style registry helpers
+  dsl/                 mg-runtime and the undo wrapper
+  prelude/             motion-core JS prelude + declarations
+  themes/              astryx theme bundle
   tools/
     batch.ts           batch operation compiler
     beats.ts           audio-beat analysis
@@ -804,12 +757,13 @@ src/
   shared/
     lib.ts             string, outcome and JSON helpers
     fs-safe.ts         Windows-safe tree removal
+    safe-path.ts       sandboxed path resolution for tool file parameters
     state.ts           execution-state snapshots
   runtime/
     atomic.ts          one Undo group, result envelope, state capture
     execute.ts         script execution and result formatting
     inspect.ts         bounded selection/roots summaries
-    mg_helpers.ts      the `_mg` DSL
+    mg_helpers/        the `_mg` DSL (modular) and manifest compiler
     rig_terms.ts       spring/easing contract derivation
   presets/
     cavalry_snippets.ts  compilePreset, listPresets, PRESET_NAMES
@@ -820,7 +774,7 @@ bin/stallion-cli.mjs   the zero-MCP CLI
 scripts/               build-time preset manifest
 types/cavalry.d.ts     API and `_mg` TypeScript declarations
 test/
-  bridge/ cli/ e2e/ helpers/ legacy/ presets/ runtime/ server/ shared/ tools/
+  bridge/ cli/ dsl/ e2e/ helpers/ lib/ presets/ runtime/ server/ shared/ tools/ validator/
                        grouped unit, mock-bridge, MCP e2e and preset-library tests
 ```
 
