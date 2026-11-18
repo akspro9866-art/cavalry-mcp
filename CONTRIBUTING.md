@@ -16,8 +16,8 @@ thin schema-checked tools around one atomic Cavalry execution.
 ## Development loop
 
 ```bash
-git clone https://github.com/<you>/cavalry-mcp.git
-cd cavalry-mcp
+git clone https://github.com/<you>/ultra-cavalry-mcp.git
+cd ultra-cavalry-mcp
 npm ci                # prepare runs the build, so dist/ exists after install
 npm run build         # tsc + preset manifest (fails over the 1500-token budget)
 npm run lint          # ESLint flat config, same tolerances as stallion

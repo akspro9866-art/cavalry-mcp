@@ -1,6 +1,6 @@
 # cavalry-mcp
 
-![CI](https://github.com/akspro9866-art/cavalry-mcp/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/akspro9866-art/ultra-cavalry-mcp/actions/workflows/ci.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 ![Node.js >= 18.17](https://img.shields.io/badge/Node.js-%3E%3D18.17-339933?logo=node.js&logoColor=white)
 
@@ -42,8 +42,8 @@ Prerequisites: Node.js >= 18.17. Cavalry 2.8 with the Stallion bridge enabled
 is only needed for live calls — the test suite runs headless.
 
 ```bash
-git clone https://github.com/akspro9866-art/cavalry-mcp.git
-cd cavalry-mcp
+git clone https://github.com/akspro9866-art/ultra-cavalry-mcp.git
+cd ultra-cavalry-mcp
 npm ci
 npm run build
 npm test
@@ -57,7 +57,7 @@ Minimal MCP client config (the same shape as
   "mcpServers": {
     "cavalry": {
       "command": "node",
-      "args": ["C:/Users/<you>/tools/cavalry-mcp/dist/index.js"]
+      "args": ["C:/Users/<you>/tools/ultra-cavalry-mcp/dist/index.js"]
     }
   }
 }
@@ -117,8 +117,8 @@ result file when an older build is listening.
 ## Install
 
 ```bash
-git clone https://github.com/akspro9866-art/cavalry-mcp.git
-cd cavalry-mcp
+git clone https://github.com/akspro9866-art/ultra-cavalry-mcp.git
+cd ultra-cavalry-mcp
 npm ci
 npm run build
 npm test
@@ -148,7 +148,7 @@ The package declares two binaries:
     "servers": {
       "cavalry": {
         "command": "node",
-        "args": ["C:/Users/<you>/tools/cavalry-mcp/dist/index.js"]
+        "args": ["C:/Users/<you>/tools/ultra-cavalry-mcp/dist/index.js"]
       }
     }
   }
@@ -162,7 +162,7 @@ The package declares two binaries:
   "mcpServers": {
     "cavalry": {
       "command": "node",
-      "args": ["C:/Users/<you>/tools/cavalry-mcp/dist/index.js"]
+      "args": ["C:/Users/<you>/tools/ultra-cavalry-mcp/dist/index.js"]
     }
   }
 }
