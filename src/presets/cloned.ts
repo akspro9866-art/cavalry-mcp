@@ -24,6 +24,7 @@
  * frame-like knobs are re-normalized to 0..1 ratios.
  */
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { MgDslLayerSpec, MgDslManifest, MgDslOpSpec } from "../runtime/mg_manifest.js";
@@ -790,7 +791,10 @@ export function syncClonedStyleOverrides(
 /** Temporary preview directory, one per style/timestamp. */
 export function clonedPreviewDir(styleId: string): string {
   const safe = normalizeClonedStyleId(styleId);
+  // The default must live inside the sandbox's own scratch tree
+  // (~/.cavalry-mcp) — a repo-root fallback is rejected by
+  // resolveSandboxedPath when the server's cwd is not the repo.
   return path.join(process.env.CAVALRY_MCP_CLONED_RENDER_DIR
     ? path.resolve(process.env.CAVALRY_MCP_CLONED_RENDER_DIR)
-    : path.join(MODULE_DIR, "..", "..", ".cloned-renders"), safe, Date.now().toString(36));
+    : path.join(os.homedir(), ".cavalry-mcp", ".cloned-renders"), safe, Date.now().toString(36));
 }

@@ -132,8 +132,10 @@ export function registerClonedTools(server: McpServer): void {
         const compName = String(args.comp_name ?? "").trim()
           || `Cloned ${styleId} ${new Date().toISOString().replace(/[:.]/g, "-")}`;
         // Derived from the traversal-safe style id, then double-checked
-        // against the sandbox roots.
-        const renderDir = resolveSandboxedPath(clonedPreviewDir(styleId), clonedPreviewDir(styleId), "renderDir");
+        // against the sandbox roots. Computed once — clonedPreviewDir embeds
+        // Date.now(), so a second call would resolve a different directory.
+        const previewDir = clonedPreviewDir(styleId);
+        const renderDir = resolveSandboxedPath(previewDir, previewDir, "renderDir");
 
         // The manifest is compiled into the SAME script that creates the comp:
         // batch-step applies dslManifest before user script, so a separate
